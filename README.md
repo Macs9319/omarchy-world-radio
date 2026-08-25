@@ -16,6 +16,8 @@ proprietary catalog.
   2000s, ...) that narrow the station list; combine both at once.
 - **Tuning dial** — Previous/Next buttons step through the current station list; a
   "🎲 Surprise" button spins a random country and station.
+- **Favorites** — star a station to pin it to the top of its list. Favorites are stored
+  in `~/.local/state/omarchy/world-radio-favorites.json` and survive shell restarts.
 - **Live playback controls** — Play/Pause, Stop, and a volume slider, driven over mpv's
   JSON IPC socket (via Quickshell's native `Socket` type — no extra CLI dependency).
 - **Now playing** — shows the live ICY stream title when the station sends one.

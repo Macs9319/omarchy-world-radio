@@ -86,11 +86,130 @@ Panel {
 
   property string ipcSocketPath: ""
 
+  // Starred stations, keyed by stationuuid: { uuid, name, playUrl, codec,
+  // bitrate, tags }. PersistentProperties (see `state` above) only survives
+  // in-process QML reloads, not a real shell restart — confirmed by the
+  // absence of any on-disk state for it and by the first-party notifications
+  // service's own comment to that effect. Favorites need to actually survive
+  // a restart to be worth starring, so they get their own on-disk file
+  // instead, following that same service's FileView + debounced-save pattern.
+  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/"
+  readonly property string favoritesPath: stateDir + "world-radio-favorites.json"
+  property var favorites: ({})
+  property bool favoritesLoaded: false
+
   ListModel { id: stationsModel }
+
+  Process { id: ensureStateDirProc; command: ["mkdir", "-p", root.stateDir]; running: false }
+
+  FileView {
+    id: favoritesFile
+    path: root.favoritesPath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadFavorites(text())
+    // First run: the file doesn't exist yet. Without this, favoritesLoaded
+    // stays false forever and scheduleFavoritesSave() becomes a permanent
+    // no-op, so nothing ever gets written.
+    onLoadFailed: root.loadFavorites("")
+  }
+
+  Timer {
+    id: favoritesSaveTimer
+    interval: 200
+    repeat: false
+    onTriggered: root.flushFavorites()
+  }
+
+  function loadFavorites(raw) {
+    if (root.favoritesLoaded) return
+    var parsed = {}
+    try {
+      var data = JSON.parse(raw || "")
+      if (data && typeof data === "object" && data.favorites && typeof data.favorites === "object") {
+        for (var uuid in data.favorites) {
+          var f = data.favorites[uuid]
+          if (!f || typeof f !== "object") continue
+          var name = String(f.name || "")
+          var playUrl = String(f.playUrl || "")
+          // Re-validated on load, not just on write — a hand-edited or
+          // corrupted file shouldn't be able to hand mpv a non-http(s) URL.
+          if (!uuid || !name || !/^https?:\/\//i.test(playUrl)) continue
+          parsed[uuid] = {
+            uuid: uuid,
+            name: name,
+            playUrl: playUrl,
+            codec: String(f.codec || ""),
+            bitrate: Number(f.bitrate || 0),
+            tags: String(f.tags || "")
+          }
+        }
+      }
+    } catch (e) { }
+    root.favorites = parsed
+    root.favoritesLoaded = true
+  }
+
+  function flushFavorites() {
+    favoritesFile.setText(JSON.stringify({ version: 1, favorites: root.favorites }, null, 2) + "\n")
+  }
+
+  function scheduleFavoritesSave() {
+    if (!root.favoritesLoaded) return
+    favoritesSaveTimer.restart()
+  }
+
+  function isFavorite(uuid) {
+    return Object.prototype.hasOwnProperty.call(root.favorites, uuid)
+  }
+
+  function toggleFavorite(row) {
+    if (!row || !row.uuid) return
+    var next = {}
+    for (var k in root.favorites) next[k] = root.favorites[k]
+    if (next[row.uuid]) {
+      delete next[row.uuid]
+    } else {
+      next[row.uuid] = {
+        uuid: row.uuid,
+        name: row.name,
+        playUrl: row.playUrl,
+        codec: row.codec,
+        bitrate: row.bitrate,
+        tags: row.tags
+      }
+    }
+    root.favorites = next
+    root.scheduleFavoritesSave()
+    root.resortStations()
+  }
+
+  // Stable-partitions the currently loaded list so favorited stations sit
+  // above everything else, without disturbing relative order otherwise.
+  // Called after a fresh search and whenever a favorite is toggled, so a
+  // star applied to a station already on screen jumps it to the top live.
+  function resortStations() {
+    var rows = []
+    for (var i = 0; i < stationsModel.count; i++) {
+      var r = stationsModel.get(i)
+      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags })
+    }
+    rows.sort(function(a, b) {
+      var af = root.isFavorite(a.uuid) ? 0 : 1
+      var bf = root.isFavorite(b.uuid) ? 0 : 1
+      return af - bf
+    })
+    stationsModel.clear()
+    for (var j = 0; j < rows.length; j++) stationsModel.append(rows[j])
+  }
 
   Component.onCompleted: {
     var runtimeDir = Quickshell.env("XDG_RUNTIME_DIR")
     ipcSocketPath = (runtimeDir && runtimeDir.length > 0 ? runtimeDir : "/tmp") + "/omarchy-worldradio-" + Math.floor(Math.random() * 1e9) + ".sock"
+
+    ensureStateDirProc.running = true
+    Qt.callLater(function() { favoritesFile.reload() })
   }
 
   onOpenedChanged: {
@@ -290,6 +409,7 @@ Panel {
           }
         } catch (e) { }
         for (var j = 0; j < list.length; j++) stationsModel.append(list[j])
+        root.resortStations()
         if (root.pendingSurprise) {
           root.pendingSurprise = false
           if (stationsModel.count > 0) {
@@ -786,12 +906,23 @@ Panel {
                 ? Style.hoverFillFor(root.bar.foreground, Color.accent)
                 : (state.stationUuid === row.uuid ? Style.selectedFillFor(root.bar.foreground, Color.accent) : "transparent")
 
+              // Row-wide click target underneath everything else, so the
+              // star button (declared last, on top) can claim clicks in its
+              // own smaller area first.
+              MouseArea {
+                id: rowMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.playStation(row.uuid, row.name, row.playUrl)
+              }
+
               Column {
                 anchors.left: parent.left
-                anchors.right: parent.right
+                anchors.right: starButton.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Style.space(10)
-                anchors.rightMargin: Style.space(10)
+                anchors.rightMargin: Style.space(6)
                 spacing: Style.space(1)
 
                 Text {
@@ -813,12 +944,23 @@ Panel {
                 }
               }
 
-              MouseArea {
-                id: rowMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.playStation(row.uuid, row.name, row.playUrl)
+              Text {
+                id: starButton
+                text: root.isFavorite(row.uuid) ? "󰓎" : "󰓒"
+                color: root.isFavorite(row.uuid) ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(6)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleFavorite(row)
+                }
               }
             }
           }
