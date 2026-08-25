@@ -45,6 +45,17 @@ git clone https://github.com/Macs9319/omarchy-world-radio ~/.config/omarchy/plug
 omarchy plugin enable ronnie.worldradio --section right
 ```
 
+## Uninstall
+
+```sh
+omarchy plugin remove ronnie.worldradio
+```
+
+This disables the plugin and deletes `~/.config/omarchy/plugins/ronnie.worldradio`. It
+doesn't touch anything outside that folder — no other config files are modified. If you
+also added the optional keybinding from Usage below, remove that line yourself from
+`~/.config/hypr/bindings.lua`.
+
 ## Usage
 
 Click the radio icon in the bar (or bind a key, e.g. in
