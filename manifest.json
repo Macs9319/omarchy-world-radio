@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "ronnie.worldradio",
+  "name": "World Radio",
+  "version": "1.0.0",
+  "author": "ronnie",
+  "license": "MIT",
+  "description": "Pick a country and a mood, tune in to a live radio station from there — inspired by radiooooo.com",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "World Radio",
+    "description": "Browse live internet radio by country and mood, then listen",
+    "category": "Media",
+    "aliases": ["radio", "worldradio"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": { "defaultVolume": 70 },
+    "schema": [
+      { "key": "defaultVolume", "type": "integer", "label": "Default volume", "min": 0, "max": 100, "step": 5, "defaultValue": 70 }
+    ]
+  }
+}
