@@ -98,7 +98,7 @@ Panel {
   property var favorites: ({})
   property bool favoritesLoaded: false
 
-  // Bounds enforced on the favorites file itself (see favoritesStatProc)
+  // Bounds enforced on the favorites file itself (see favoritesReadProc)
   // and on every entry loaded from or written to it. The path is fixed and
   // predictable, so nothing should ever hand its raw content to JSON.parse
   // or the model without these checked first: a hostile or corrupted
@@ -111,43 +111,60 @@ Panel {
 
   Process { id: ensureStateDirProc; command: ["mkdir", "-p", root.stateDir]; running: false }
 
-  // stat(2) reads inode metadata only — it never opens/blocks on a FIFO the
-  // way actually reading one would, so this check itself is always cheap
-  // and non-blocking regardless of what currently sits at favoritesPath.
-  // Only a plain regular file at or under maxFavoritesFileBytes is allowed
-  // through to favoritesFile.reload(); anything else (missing, a pipe, a
-  // device, an oversized file) is treated the same as "no favorites yet".
+  // A prior version checked this path with a separate `stat`, then read it
+  // through FileView — two independent path lookups, so the path could be
+  // repointed at a FIFO or an oversized file in the window between them
+  // (TOCTOU), and FileView.text() would have already materialized the full
+  // content in memory before any count/length cap ever ran. This opens the
+  // path exactly once (fd 3) and does every check against that held-open
+  // descriptor via /proc/self/fd/3 — never touching the path again — so
+  // there is no second lookup left to race. `<>` (read-write) opens a FIFO
+  // immediately instead of blocking for a reader (Linux-specific, fine here
+  // since Omarchy is Linux-only); a non-regular or oversized result is
+  // rejected before anything is read off it, and `head -c` bounds the read
+  // itself rather than relying on the caps in loadFavorites to trim
+  // something already fully read into memory.
+  readonly property string favoritesReadScript: `
+    exec 3<> "$1" || exit 1
+    # -L dereferences /proc/self/fd/3, which is a kernel-maintained magic
+    # symlink to whatever this process's own fd 3 already has open — not an
+    # attacker-controlled filesystem path. Dereferencing it just reveals the
+    # true type/size of the file exec already opened above; it isn't a
+    # second lookup of the untrusted path and reintroduces no race. Without
+    # -L, stat reports on the magic symlink itself ("symbolic link"),
+    # which would fail every real file open the check.
+    info=$(stat -L -c '%F|%s' /proc/self/fd/3) || exit 1
+    case "$info" in
+      "regular file|"*) ;;
+      *) exit 1 ;;
+    esac
+    bytes=\${info#regular file|}
+    case "$bytes" in
+      ''|*[!0-9]*) exit 1 ;;
+    esac
+    [ "$bytes" -le "$2" ] || exit 1
+    head -c "$2" <&3
+  `
+
   Process {
-    id: favoritesStatProc
-    command: ["stat", "-c", "%F|%s", root.favoritesPath]
+    id: favoritesReadProc
+    command: ["bash", "-c", root.favoritesReadScript, "--", root.favoritesPath, String(root.maxFavoritesFileBytes)]
     stdout: StdioCollector {
-      onStreamFinished: {
-        var out = String(text || "").trim()
-        var parts = out.split("|")
-        var kind = parts.length > 0 ? parts[0] : ""
-        var size = parts.length > 1 && /^[0-9]+$/.test(parts[1]) ? Number(parts[1]) : -1
-        if (kind === "regular file" && size >= 0 && size <= root.maxFavoritesFileBytes) {
-          favoritesFile.reload()
-        } else {
-          root.loadFavorites("")
-        }
-      }
+      // Empty on any failure branch above (missing path, non-regular,
+      // oversized) — loadFavorites("") already treats that as "no
+      // favorites yet", so no separate exit-code handling is needed.
+      onStreamFinished: root.loadFavorites(String(text || ""))
     }
   }
 
+  // Write-only: setText()/atomicWrites for persisting favorites back out.
+  // Reading goes through favoritesReadProc instead, never through this.
   FileView {
     id: favoritesFile
     path: root.favoritesPath
     watchChanges: false
     atomicWrites: true
     printErrors: false
-    onLoaded: root.loadFavorites(text())
-    // First run: the file doesn't exist yet (favoritesStatProc already
-    // routed that case to loadFavorites("") without ever calling reload(),
-    // but this stays as a fallback for any other load failure). Without it,
-    // favoritesLoaded stays false forever and scheduleFavoritesSave()
-    // becomes a permanent no-op, so nothing ever gets written.
-    onLoadFailed: root.loadFavorites("")
   }
 
   Timer {
@@ -248,7 +265,7 @@ Panel {
     ipcSocketPath = (runtimeDir && runtimeDir.length > 0 ? runtimeDir : "/tmp") + "/omarchy-worldradio-" + Math.floor(Math.random() * 1e9) + ".sock"
 
     ensureStateDirProc.running = true
-    Qt.callLater(function() { favoritesStatProc.running = true })
+    Qt.callLater(function() { favoritesReadProc.running = true })
   }
 
   onOpenedChanged: {
