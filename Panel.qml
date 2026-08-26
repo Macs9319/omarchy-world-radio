@@ -98,9 +98,42 @@ Panel {
   property var favorites: ({})
   property bool favoritesLoaded: false
 
+  // Bounds enforced on the favorites file itself (see favoritesStatProc)
+  // and on every entry loaded from or written to it. The path is fixed and
+  // predictable, so nothing should ever hand its raw content to JSON.parse
+  // or the model without these checked first: a hostile or corrupted
+  // replacement (a FIFO swapped in at that path, or just an oversized file)
+  // must not be able to block or balloon the shell's memory.
+  readonly property int maxFavoritesFileBytes: 1048576
+  readonly property int maxFavorites: 500
+
   ListModel { id: stationsModel }
 
   Process { id: ensureStateDirProc; command: ["mkdir", "-p", root.stateDir]; running: false }
+
+  // stat(2) reads inode metadata only — it never opens/blocks on a FIFO the
+  // way actually reading one would, so this check itself is always cheap
+  // and non-blocking regardless of what currently sits at favoritesPath.
+  // Only a plain regular file at or under maxFavoritesFileBytes is allowed
+  // through to favoritesFile.reload(); anything else (missing, a pipe, a
+  // device, an oversized file) is treated the same as "no favorites yet".
+  Process {
+    id: favoritesStatProc
+    command: ["stat", "-c", "%F|%s", root.favoritesPath]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var out = String(text || "").trim()
+        var parts = out.split("|")
+        var kind = parts.length > 0 ? parts[0] : ""
+        var size = parts.length > 1 && /^[0-9]+$/.test(parts[1]) ? Number(parts[1]) : -1
+        if (kind === "regular file" && size >= 0 && size <= root.maxFavoritesFileBytes) {
+          favoritesFile.reload()
+        } else {
+          root.loadFavorites("")
+        }
+      }
+    }
+  }
 
   FileView {
     id: favoritesFile
@@ -109,9 +142,11 @@ Panel {
     atomicWrites: true
     printErrors: false
     onLoaded: root.loadFavorites(text())
-    // First run: the file doesn't exist yet. Without this, favoritesLoaded
-    // stays false forever and scheduleFavoritesSave() becomes a permanent
-    // no-op, so nothing ever gets written.
+    // First run: the file doesn't exist yet (favoritesStatProc already
+    // routed that case to loadFavorites("") without ever calling reload(),
+    // but this stays as a fallback for any other load failure). Without it,
+    // favoritesLoaded stays false forever and scheduleFavoritesSave()
+    // becomes a permanent no-op, so nothing ever gets written.
     onLoadFailed: root.loadFavorites("")
   }
 
@@ -125,25 +160,29 @@ Panel {
   function loadFavorites(raw) {
     if (root.favoritesLoaded) return
     var parsed = {}
+    var count = 0
     try {
       var data = JSON.parse(raw || "")
       if (data && typeof data === "object" && data.favorites && typeof data.favorites === "object") {
         for (var uuid in data.favorites) {
+          if (count >= root.maxFavorites) break
           var f = data.favorites[uuid]
           if (!f || typeof f !== "object") continue
-          var name = String(f.name || "")
-          var playUrl = String(f.playUrl || "")
+          var safeUuid = String(uuid).slice(0, 64)
+          var name = String(f.name || "").slice(0, 200)
+          var playUrl = String(f.playUrl || "").slice(0, 2000)
           // Re-validated on load, not just on write — a hand-edited or
           // corrupted file shouldn't be able to hand mpv a non-http(s) URL.
-          if (!uuid || !name || !/^https?:\/\//i.test(playUrl)) continue
-          parsed[uuid] = {
-            uuid: uuid,
+          if (!safeUuid || !name || !/^https?:\/\//i.test(playUrl)) continue
+          parsed[safeUuid] = {
+            uuid: safeUuid,
             name: name,
             playUrl: playUrl,
-            codec: String(f.codec || ""),
-            bitrate: Number(f.bitrate || 0),
-            tags: String(f.tags || "")
+            codec: String(f.codec || "").slice(0, 32),
+            bitrate: Math.max(0, Math.min(9999999, Number(f.bitrate) || 0)),
+            tags: String(f.tags || "").slice(0, 500)
           }
+          count++
         }
       }
     } catch (e) { }
@@ -170,14 +209,14 @@ Panel {
     for (var k in root.favorites) next[k] = root.favorites[k]
     if (next[row.uuid]) {
       delete next[row.uuid]
-    } else {
+    } else if (Object.keys(next).length < root.maxFavorites) {
       next[row.uuid] = {
-        uuid: row.uuid,
-        name: row.name,
-        playUrl: row.playUrl,
-        codec: row.codec,
-        bitrate: row.bitrate,
-        tags: row.tags
+        uuid: String(row.uuid).slice(0, 64),
+        name: String(row.name).slice(0, 200),
+        playUrl: String(row.playUrl).slice(0, 2000),
+        codec: String(row.codec).slice(0, 32),
+        bitrate: Math.max(0, Math.min(9999999, Number(row.bitrate) || 0)),
+        tags: String(row.tags).slice(0, 500)
       }
     }
     root.favorites = next
@@ -209,7 +248,7 @@ Panel {
     ipcSocketPath = (runtimeDir && runtimeDir.length > 0 ? runtimeDir : "/tmp") + "/omarchy-worldradio-" + Math.floor(Math.random() * 1e9) + ".sock"
 
     ensureStateDirProc.running = true
-    Qt.callLater(function() { favoritesFile.reload() })
+    Qt.callLater(function() { favoritesStatProc.running = true })
   }
 
   onOpenedChanged: {
