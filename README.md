@@ -6,7 +6,7 @@ to [radiooooo.com](https://app.radiooooo.com/)'s "spin the globe" idea, built en
 the open [Radio Browser](https://www.radio-browser.info/) directory rather than any
 proprietary catalog.
 
-![World Radio panel](screen.png)
+![World Radio panel](preview.png)
 
 ## Features
 
