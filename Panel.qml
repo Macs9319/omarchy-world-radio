@@ -111,48 +111,60 @@ Panel {
 
   Process { id: ensureStateDirProc; command: ["mkdir", "-p", root.stateDir]; running: false }
 
-  // A prior version checked this path with a separate `stat`, then read it
-  // through FileView — two independent path lookups, so the path could be
-  // repointed at a FIFO or an oversized file in the window between them
-  // (TOCTOU), and FileView.text() would have already materialized the full
-  // content in memory before any count/length cap ever ran. This opens the
-  // path exactly once (fd 3) and does every check against that held-open
-  // descriptor via /proc/self/fd/3 — never touching the path again — so
-  // there is no second lookup left to race. `<>` (read-write) opens a FIFO
-  // immediately instead of blocking for a reader (Linux-specific, fine here
-  // since Omarchy is Linux-only); a non-regular or oversized result is
-  // rejected before anything is read off it, and `head -c` bounds the read
-  // itself rather than relying on the caps in loadFavorites to trim
-  // something already fully read into memory.
+  // Earlier versions of this read went through progressively narrower gaps:
+  // a separate stat-by-path then FileView.reload() (two path lookups, so
+  // the path could be repointed between them); then a single bash fd
+  // (exec 3<> "$path") checked via /proc/self/fd/3 — which closed that
+  // race but still transparently followed a symlink at favoritesPath,
+  // since plain open()/bash redirection has no way to refuse one.
+  //
+  // Bash's redirection operators can't express O_NOFOLLOW, so this uses
+  // Python's os.open() to get the real flags: O_NOFOLLOW makes the open
+  // itself fail if favoritesPath's final component is a symlink (rather
+  // than silently reading whatever it points to), and O_NONBLOCK makes
+  // opening a FIFO return immediately instead of blocking for a reader.
+  // Every check after that — regular-file, size — runs via fstat() on the
+  // already-open fd, and the read is capped at maxFavoritesFileBytes, so
+  // nothing about the path is ever consulted a second time and nothing
+  // past the cap is ever read off disk.
+  //
+  // Verified locally against all five cases before shipping: missing path,
+  // a valid file, an oversized file, a FIFO with no writer, and a symlink
+  // to an otherwise-legitimate regular file elsewhere — only the valid
+  // file's content comes back; everything else exits non-zero with no
+  // stdout, which loadFavorites("") already treats as "no favorites yet".
   readonly property string favoritesReadScript: `
-    exec 3<> "$1" || exit 1
-    # -L dereferences /proc/self/fd/3, which is a kernel-maintained magic
-    # symlink to whatever this process's own fd 3 already has open — not an
-    # attacker-controlled filesystem path. Dereferencing it just reveals the
-    # true type/size of the file exec already opened above; it isn't a
-    # second lookup of the untrusted path and reintroduces no race. Without
-    # -L, stat reports on the magic symlink itself ("symbolic link"),
-    # which would fail every real file open the check.
-    info=$(stat -L -c '%F|%s' /proc/self/fd/3) || exit 1
-    case "$info" in
-      "regular file|"*) ;;
-      *) exit 1 ;;
-    esac
-    bytes=\${info#regular file|}
-    case "$bytes" in
-      ''|*[!0-9]*) exit 1 ;;
-    esac
-    [ "$bytes" -le "$2" ] || exit 1
-    head -c "$2" <&3
+import os, sys, stat as statmod
+path, max_bytes = sys.argv[1], int(sys.argv[2])
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError:
+    sys.exit(1)
+try:
+    st = os.fstat(fd)
+    if not statmod.S_ISREG(st.st_mode) or st.st_size > max_bytes:
+        sys.exit(1)
+    chunks, remaining = [], max_bytes
+    while remaining > 0:
+        chunk = os.read(fd, min(65536, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    sys.stdout.buffer.write(b"".join(chunks))
+except OSError:
+    sys.exit(1)
+finally:
+    os.close(fd)
   `
 
   Process {
     id: favoritesReadProc
-    command: ["bash", "-c", root.favoritesReadScript, "--", root.favoritesPath, String(root.maxFavoritesFileBytes)]
+    command: ["python3", "-c", root.favoritesReadScript, root.favoritesPath, String(root.maxFavoritesFileBytes)]
     stdout: StdioCollector {
-      // Empty on any failure branch above (missing path, non-regular,
-      // oversized) — loadFavorites("") already treats that as "no
-      // favorites yet", so no separate exit-code handling is needed.
+      // Empty on any failure branch above (missing path, symlink, non-
+      // regular, oversized) — loadFavorites("") already treats that as
+      // "no favorites yet", so no separate exit-code handling is needed.
       onStreamFinished: root.loadFavorites(String(text || ""))
     }
   }
