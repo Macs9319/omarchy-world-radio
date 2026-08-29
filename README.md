@@ -12,6 +12,8 @@ proprietary catalog.
 
 - **Country picker** — a curated grid of flags plus a live search over every country in
   the Radio Browser directory.
+- **Search by name** — a free-text box that filters stations by name, on its own
+  (worldwide) or AND-ed with the selected country, mood and decade. Debounced ~350ms.
 - **Mood and Decade filters** — optional tag chips (pop, rock, jazz, classical, 80s, 90s,
   2000s, ...) that narrow the station list; combine both at once.
 - **Tuning dial** — Previous/Next buttons step through the current station list; a
