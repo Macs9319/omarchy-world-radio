@@ -473,7 +473,7 @@ finally:
       if (state.decade) tags.push(state.decade)
       if (tags.length === 1) params.push("tag=" + encodeURIComponent(tags[0]))
       else if (tags.length > 1) params.push("tagList=" + encodeURIComponent(tags.join(",")))
-      params.push("limit=30")
+      params.push("limit=80")
       params.push("order=clickcount")
       params.push("reverse=true")
       params.push("hidebroken=true")
