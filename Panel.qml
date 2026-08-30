@@ -34,6 +34,7 @@ Panel {
     { code: "GB", name: "United Kingdom" },
     { code: "FR", name: "France" },
     { code: "DE", name: "Germany" },
+    { code: "NL", name: "Netherlands" },
     { code: "NG", name: "Nigeria" },
     { code: "EG", name: "Egypt" },
     { code: "IN", name: "India" },
@@ -81,6 +82,11 @@ Panel {
   property var allCountries: []
   property string countryQuery: ""
   property var countryMatches: []
+
+  // Free-text station-name filter. Transient (not in `state`): cleared on a
+  // shell restart, like countryQuery. Passed straight through to the Radio
+  // Browser search as its `name` parameter, AND-ed with country/mood/decade.
+  property string nameQuery: ""
 
   property bool loadingStations: false
   property string stationsError: ""
@@ -185,6 +191,24 @@ finally:
     interval: 200
     repeat: false
     onTriggered: root.flushFavorites()
+  }
+
+  // Debounces the name-search field so a request fires ~350ms after the last
+  // keystroke rather than on every character. With nothing to search by at
+  // all (no name, no country) it just clears the list instead of pulling the
+  // global top stations.
+  Timer {
+    id: nameSearchTimer
+    interval: 350
+    repeat: false
+    onTriggered: {
+      if (root.nameQuery.trim() === "" && state.countryCode === "") {
+        stationsModel.clear()
+        root.stationsError = ""
+        return
+      }
+      root.loadStations()
+    }
   }
 
   function loadFavorites(raw) {
@@ -312,6 +336,10 @@ finally:
   }
 
   function surpriseMe() {
+    // Drop any name filter first, or the random country would be searched
+    // through a stale term and almost always come back empty.
+    nameField.text = ""
+    root.nameQuery = ""
     var pick = root.curatedCountries[Math.floor(Math.random() * root.curatedCountries.length)]
     root.pendingSurprise = true
     root.selectCountry(pick.code, pick.name)
@@ -449,12 +477,13 @@ finally:
     command: {
       var params = []
       if (state.countryCode) params.push("countrycode=" + encodeURIComponent(state.countryCode))
+      if (root.nameQuery.trim() !== "") params.push("name=" + encodeURIComponent(root.nameQuery.trim()))
       var tags = []
       if (state.tag) tags.push(state.tag)
       if (state.decade) tags.push(state.decade)
       if (tags.length === 1) params.push("tag=" + encodeURIComponent(tags[0]))
       else if (tags.length > 1) params.push("tagList=" + encodeURIComponent(tags.join(",")))
-      params.push("limit=30")
+      params.push("limit=80")
       params.push("order=clickcount")
       params.push("reverse=true")
       params.push("hidebroken=true")
@@ -771,6 +800,32 @@ finally:
           }
 
           PanelSeparator { foreground: root.bar.foreground }
+          PanelSectionHeader { text: "SEARCH BY NAME"; foreground: root.bar.foreground }
+
+          TextField {
+            id: nameField
+            width: parent.width
+            placeholderText: "Station name…"
+            foreground: root.bar.foreground
+            onTextChanged: {
+              root.nameQuery = text
+              nameSearchTimer.restart()
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.nameQuery.trim() !== ""
+            text: state.countryCode !== ""
+              ? "Matching “" + root.nameQuery.trim() + "” in " + state.countryName
+              : "Matching “" + root.nameQuery.trim() + "” worldwide"
+            color: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          PanelSeparator { foreground: root.bar.foreground }
           PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
 
           Flow {
@@ -981,8 +1036,8 @@ finally:
             anchors.topMargin: Style.space(8)
             anchors.left: parent.left
             anchors.right: parent.right
-            visible: !root.loadingStations && root.stationsError === "" && state.countryCode === ""
-            text: "Pick a country to tune in."
+            visible: !root.loadingStations && root.stationsError === "" && state.countryCode === "" && root.nameQuery.trim() === ""
+            text: "Pick a country, or search by name, to tune in."
             color: root.bar.foreground
             opacity: 0.6
             font.family: root.bar.fontFamily
@@ -994,8 +1049,8 @@ finally:
             anchors.topMargin: Style.space(8)
             anchors.left: parent.left
             anchors.right: parent.right
-            visible: !root.loadingStations && root.stationsError === "" && state.countryCode !== "" && stationsModel.count === 0
-            text: "No stations found — try a different mood or country."
+            visible: !root.loadingStations && root.stationsError === "" && (state.countryCode !== "" || root.nameQuery.trim() !== "") && stationsModel.count === 0
+            text: "No stations found — try a different name, mood, or country."
             color: root.bar.foreground
             opacity: 0.6
             font.family: root.bar.fontFamily
