@@ -43,7 +43,7 @@ Panel {
     { code: "ZA", name: "South Africa" },
     { code: "TH", name: "Thailand" },
     { code: "MY", name: "Malaysia" },
-    { code: "MY", name: "Singapore" },
+    { code: "SG", name: "Singapore" },
     { code: "PL", name: "Poland" }
   ]
 
