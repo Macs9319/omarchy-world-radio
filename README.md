@@ -109,6 +109,10 @@ Station data comes from the community-run [Radio Browser](https://www.radio-brow
 API. This project is not affiliated with or endorsed by radiooooo.com — it's an
 independent plugin inspired by the idea of exploring the world through radio.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## License
 
 MIT
