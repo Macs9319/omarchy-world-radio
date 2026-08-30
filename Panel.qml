@@ -851,8 +851,25 @@ finally:
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.space(4)
                 onClicked: {
-                  countryField.text = ""
-                  root.selectCountry(modelData.code, modelData.name)
+                  // Deferred: selectCountry() clears root.countryMatches,
+                  // which is this Repeater's own model — doing that
+                  // synchronously from inside this delegate's own click
+                  // handler destroys the Button mid-handler (the first-
+                  // party notifications service hits the same class of
+                  // bug and documents it as Qt.callLater avoiding a
+                  // QV4::Object::insertMember crash when a Repeater is
+                  // mid-incubation while its model is mutated). Without
+                  // this, the handler aborted after clearing the search
+                  // text and never reached selectCountry() at all, so
+                  // picking a search result silently failed to load its
+                  // stations — confirmed via a live "ReferenceError: root
+                  // is not defined" at this exact line in journalctl.
+                  var pickedCode = modelData.code
+                  var pickedName = modelData.name
+                  Qt.callLater(function() {
+                    countryField.text = ""
+                    root.selectCountry(pickedCode, pickedName)
+                  })
                 }
               }
             }
