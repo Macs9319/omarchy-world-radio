@@ -202,8 +202,16 @@ finally:
     repeat: false
     onTriggered: {
       if (root.nameQuery.trim() === "" && state.countryCode === "") {
+        // loadStations() kills any in-flight stationsProc before starting
+        // a fresh one; this early-return branch skipped that, so a fetch
+        // still in flight from a moment ago (e.g. typed a name, then
+        // deleted it within one round-trip) could complete afterward and
+        // silently repopulate the list with results for a query the user
+        // already cleared.
+        stationsProc.running = false
         stationsModel.clear()
         root.stationsError = ""
+        root.loadingStations = false
         return
       }
       root.loadStations()
