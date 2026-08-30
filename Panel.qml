@@ -77,6 +77,7 @@ Panel {
   property bool switchingStation: false
 
   property bool loadingCountries: false
+  property string countriesError: ""
   property var allCountries: []
   property string countryQuery: ""
   property var countryMatches: []
@@ -336,6 +337,7 @@ finally:
 
   function ensureCountriesLoaded() {
     if (root.allCountries.length > 0 || countriesProc.running) return
+    root.countriesError = ""
     root.loadingCountries = true
     countriesProc.running = true
   }
@@ -418,9 +420,11 @@ finally:
       onStreamFinished: {
         root.loadingCountries = false
         var parsed = []
+        var ok = false
         try {
           var data = JSON.parse(String(text || ""))
           if (Array.isArray(data)) {
+            ok = true
             for (var i = 0; i < data.length; i++) {
               var code = String((data[i] && data[i].iso_3166_1) || "")
               var name = String((data[i] && data[i].name) || "")
@@ -429,6 +433,12 @@ finally:
           }
         } catch (e) { }
         root.allCountries = parsed
+        // Previously silent: a failed/empty fetch (network hiccup, the
+        // hardcoded API mirror being briefly down) left the search box
+        // showing nothing with zero indication anything went wrong. Now
+        // it's surfaced so it reads as "couldn't load" instead of "your
+        // country doesn't exist".
+        root.countriesError = ok ? "" : "Couldn't load the country list. Check your connection."
         root.updateCountryMatches()
       }
     }
@@ -793,6 +803,36 @@ finally:
               root.ensureCountriesLoaded()
               root.updateCountryMatches()
             }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.countryQuery.trim() !== "" && root.loadingCountries
+            text: "Searching countries…"
+            color: root.bar.foreground
+            opacity: 0.6
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.countriesError !== ""
+            text: root.countriesError
+            color: root.bar.foreground
+            wrapMode: Text.WordWrap
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: !root.loadingCountries && root.countriesError === "" && root.countryQuery.trim() !== "" && root.allCountries.length > 0 && root.countryMatches.length === 0
+            text: "No countries match “" + root.countryQuery.trim() + "”."
+            color: root.bar.foreground
+            opacity: 0.6
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           Column {
