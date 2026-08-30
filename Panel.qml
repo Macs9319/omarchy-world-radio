@@ -35,9 +35,6 @@ Panel {
     { code: "FR", name: "France" },
     { code: "DE", name: "Germany" },
     { code: "NL", name: "Netherlands" },
-    { code: "NG", name: "Nigeria" },
-    { code: "EG", name: "Egypt" },
-    { code: "IN", name: "India" },
     { code: "JP", name: "Japan" },
     { code: "KR", name: "South Korea" },
     { code: "AU", name: "Australia" },
@@ -45,6 +42,8 @@ Panel {
     { code: "AR", name: "Argentina" },
     { code: "ZA", name: "South Africa" },
     { code: "TH", name: "Thailand" },
+    { code: "MY", name: "Malaysia" },
+    { code: "MY", name: "Singapore" },
     { code: "PL", name: "Poland" }
   ]
 
