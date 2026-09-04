@@ -18,7 +18,12 @@ machine's actual installed `.qmltypes`/`.qml` files, a live `hyprctl` test
 against the Hyprland instance actually running on this machine, and official
 docs fetched directly, not brainstormed from memory. Two items below
 **correct** a claim in the original doc after digging further; both are
-flagged explicitly where that happens.
+flagged explicitly where that happens. Item #3 also carries a later
+self-correction, caught during implementation and re-verified live: the
+`languagecodes=` param this doc originally recommended turned out not to
+filter results at all, despite composing without error — a reminder that
+"the request succeeds" isn't the same check as "the request actually does
+what it's supposed to."
 
 ---
 
@@ -29,19 +34,31 @@ flagged explicitly where that happens.
 Re-confirmed live: `GET /json/tags?limit=5` and
 `GET /json/languages?order=stationcount&reverse=true&limit=5` both return
 `{"name", "stationcount"}` shapes as the original doc found (English tops
-languages at 13,178 stations as of this check). Newly confirmed:
-`GET /json/stations/search?languagecodes=fr&...` works standalone and
-composes with the plugin's other existing params (`countrycode`, `tag`,
-`limit`, `hidebroken`) in the same request — no separate lookup needed once
-a language code is chosen, exactly mirroring how `tag`/`tagList` already
-work in `stationsProc`. No rate-limit headers were observed on `/json/tags`
-or `/json/languages` across repeated calls from this machine.
+languages at 13,178 stations as of this check).
+
+**Correction (caught during implementation, re-verified live)**: this
+section originally claimed `GET /json/stations/search?languagecodes=fr&...`
+filters correctly because the request composes without erroring — that
+check wasn't sufficient. Confirmed live that `languagecodes=` does **not**
+filter results at all: `countrycode=FR&languagecodes=fr` and
+`countrycode=FR&languagecodes=<nonsense>` return the identical result set
+(same station list, most without `fr` anywhere in their own
+`languagecodes` field). The parameter that actually filters is `language=`
+— a case-sensitive substring match against each station's lowercase
+`language` field, confirmed live: `language=french` correctly returns only
+French-tagged stations, while `language=French` (capitalized) returns
+zero. It composes with the plugin's other existing params
+(`countrycode`, `tag`, `limit`, `hidebroken`) the same way `languagecodes=`
+does — no separate lookup needed once a language is chosen.
 
 **Implementation sketch**: a `languageCode` field on `state` (parallel to
-`state.tag`/`state.decade`), a fetch-once-cached `allLanguages` list
-(parallel to `allCountries`/`countriesProc`), and a `languagecodes=` param
+`state.tag`/`state.decade`, used as a stable identifier for the UI's
+"active" state — Radio Browser's own `iso_639` code, not sent to the API),
+a `languageName` field holding the display name, a fetch-once-cached
+`allLanguages` list (parallel to `allCountries`/`countriesProc`), and a
+`language=` param — built from the lowercased display name, not the code —
 appended in `stationsProc`'s command builder alongside the existing `tag`/
-`tagList` logic — same shape, one more optional AND-ed filter.
+`tagList` logic.
 
 **Open questions for a spec**: whether a language filter is a free-text
 search box (like country) or a chip picker (like mood/decade); whether
@@ -110,25 +127,37 @@ the common case.
 
 ### #5 (orig.) — Trending / Recently added — **verdict: ready to spec**
 
-**Not a correction — confirms and firms up what the original doc already
-proposed.** An earlier draft of this section mischaracterized the original
-doc as having proposed calling the dedicated `/stations/topvote` and
-`/stations/lastchange` endpoints; re-reading `docs/v2-feature-research.md`
+**Not a correction of the original doc — confirms and firms up what it
+already proposed.** An earlier draft of this section mischaracterized the
+original doc as having proposed calling the dedicated `/stations/topvote`
+and `/stations/lastchange` endpoints; re-reading `docs/v2-feature-research.md`
 item #5 directly shows its own implementation note already said to reuse
 `stationsProc`'s existing command-building shape with `order=votes` instead
 of `order=clickcount` — the same conclusion this section reaches, not a
-fix to a mistake the original doc made. What *is* newly confirmed here,
-live: the plugin's *existing* endpoint, `/json/stations/search`, accepts
-`order=votes` and `order=lastchange` (alongside the `order=clickcount` it
-already sends) and **composes with every filter already in use** —
-confirmed with `tag=jazz&order=votes&reverse=true` and with
-`order=lastchange&reverse=true` plus `hidebroken=true`, both returning
-correctly filtered/ordered results. Using `stationsProc`'s existing
-endpoint with a different `order=` value (instead of a second, separate
-endpoint) means "Trending" and "Recently added" can also respect whatever
-country/tag/decade filters are already selected, which the dedicated
-`/stations/topvote`/`/stations/lastchange` endpoints — being unfiltered,
-fixed lists — cannot do.
+fix to a mistake the original doc made.
+
+**Correction to *this* section instead (caught during implementation,
+re-verified live)**: the `order=lastchange` value recommended below for
+"Recently added" is not a valid Radio Browser order value. Confirmed live:
+`order=lastchange&reverse=true` returns the *identical* result set as an
+intentionally bogus `order=zzz123` value — i.e. it silently falls back to
+the API's default ordering rather than erroring or actually sorting by
+recency. `order=changetimestamp` is the value that actually works,
+confirmed live with a 20-station sample showing correctly monotonic
+descending `lastchangetime` values. (`order=votes` for "Trending" was
+independently re-verified and is correct as originally stated — only
+`lastchange` was wrong.) The plugin's *existing* endpoint,
+`/json/stations/search`, accepts both `order=votes` and
+`order=changetimestamp` (alongside the `order=clickcount` it already
+sends) and **composes with every filter already in use** — confirmed with
+`tag=jazz&order=votes&reverse=true` and with
+`order=changetimestamp&reverse=true` plus `hidebroken=true`, both
+returning correctly filtered/ordered results. Using `stationsProc`'s
+existing endpoint with a different `order=` value (instead of a second,
+separate endpoint) means "Trending" and "Recently added" can also respect
+whatever country/tag/decade filters are already selected, which the
+dedicated `/stations/topvote`/`/stations/lastchange` endpoints — being
+unfiltered, fixed lists — cannot do.
 
 **Implementation sketch**: one more optional `order=` override in
 `stationsProc`'s command-building function (currently hardcoded to

@@ -64,6 +64,9 @@ Panel {
     property string countryName: ""
     property string tag: ""
     property string decade: ""
+    property string languageCode: ""
+    property string languageName: ""
+    property string sortOrder: ""
     property int volume: root.defaultVolume
     property string stationUuid: ""
     property string stationName: ""
@@ -88,6 +91,12 @@ Panel {
   property var allCountries: []
   property string countryQuery: ""
   property var countryMatches: []
+
+  property bool loadingLanguages: false
+  property string languagesError: ""
+  property var allLanguages: []
+  property string languageQuery: ""
+  property var languageMatches: []
 
   // Free-text station-name filter. Transient (not in `state`): cleared on a
   // shell restart, like countryQuery. Passed straight through to the Radio
@@ -300,7 +309,7 @@ finally:
     var rows = []
     for (var i = 0; i < stationsModel.count; i++) {
       var r = stationsModel.get(i)
-      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags })
+      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags, favicon: r.favicon })
     }
     rows.sort(function(a, b) {
       var af = root.isFavorite(a.uuid) ? 0 : 1
@@ -339,21 +348,65 @@ finally:
     root.loadStations()
   }
 
+  // A country pick isn't the only thing that already produces (or should
+  // produce) a station list — a worldwide name search or a language-only
+  // pick does too. Toggling a filter in any of those states needs to
+  // reload, or the UI shows the new filter as active while the visible
+  // list silently keeps ignoring it.
+  function hasLoadedStations() {
+    return state.countryCode !== "" || root.nameQuery.trim() !== "" || state.languageCode !== ""
+  }
+
   function toggleTag(tagName) {
     state.tag = state.tag === tagName ? "" : tagName
-    if (state.countryCode !== "") root.loadStations()
+    if (root.hasLoadedStations()) root.loadStations()
   }
 
   function toggleDecade(decadeName) {
     state.decade = state.decade === decadeName ? "" : decadeName
-    if (state.countryCode !== "") root.loadStations()
+    if (root.hasLoadedStations()) root.loadStations()
+  }
+
+  // Mutually exclusive with itself only (not with tag/decade, which stay
+  // independent filters): picking "votes" while "changetimestamp" is active
+  // switches directly, and re-picking the active one clears back to the
+  // default clickcount ordering — same "one active value" toggle shape as
+  // toggleTag/toggleDecade, applied to a single field.
+  function toggleSortOrder(order) {
+    state.sortOrder = state.sortOrder === order ? "" : order
+    if (root.hasLoadedStations()) root.loadStations()
+  }
+
+  function selectLanguage(code, name) {
+    state.languageCode = code
+    state.languageName = name
+    root.languageQuery = ""
+    root.languageMatches = []
+    if (root.hasLoadedStations()) root.loadStations()
+  }
+
+  function clearLanguage() {
+    state.languageCode = ""
+    state.languageName = ""
+    if (root.hasLoadedStations()) {
+      root.loadStations()
+    } else {
+      // Language was the only active filter — nothing left to search by,
+      // so clear the list directly rather than falling through to
+      // loadStations(), which would otherwise pull the unfiltered global
+      // top-80 (same reasoning as nameSearchTimer's empty-clear branch).
+      stationsProc.running = false
+      stationsModel.clear()
+    }
   }
 
   function surpriseMe() {
-    // Drop any name filter first, or the random country would be searched
-    // through a stale term and almost always come back empty.
+    // Drop any name/language filter first, or the random country would be
+    // searched through a stale term and almost always come back empty.
     nameField.text = ""
     root.nameQuery = ""
+    state.languageCode = ""
+    state.languageName = ""
     var pick = root.curatedCountries[Math.floor(Math.random() * root.curatedCountries.length)]
     root.pendingSurprise = true
     root.selectCountry(pick.code, pick.name)
@@ -367,14 +420,21 @@ finally:
     Qt.callLater(function() { stationsProc.running = true })
   }
 
-  function updateCountryMatches() {
-    var q = root.countryQuery.trim().toLowerCase()
-    if (q.length === 0) { root.countryMatches = []; return }
+  // Shared by the country and language pickers: case-insensitive substring
+  // match against a fetch-once-cached { code, name } list, capped so a
+  // broad query (e.g. a single letter) doesn't dump the whole list.
+  function matchesFor(items, query) {
+    var q = query.trim().toLowerCase()
+    if (q.length === 0) return []
     var out = []
-    for (var i = 0; i < root.allCountries.length && out.length < 8; i++) {
-      if (root.allCountries[i].name.toLowerCase().indexOf(q) !== -1) out.push(root.allCountries[i])
+    for (var i = 0; i < items.length && out.length < 8; i++) {
+      if (items[i].name.toLowerCase().indexOf(q) !== -1) out.push(items[i])
     }
-    root.countryMatches = out
+    return out
+  }
+
+  function updateCountryMatches() {
+    root.countryMatches = root.matchesFor(root.allCountries, root.countryQuery)
   }
 
   function ensureCountriesLoaded() {
@@ -382,6 +442,17 @@ finally:
     root.countriesError = ""
     root.loadingCountries = true
     countriesProc.running = true
+  }
+
+  function updateLanguageMatches() {
+    root.languageMatches = root.matchesFor(root.allLanguages, root.languageQuery)
+  }
+
+  function ensureLanguagesLoaded() {
+    if (root.allLanguages.length > 0 || languagesProc.running) return
+    root.languagesError = ""
+    root.loadingLanguages = true
+    languagesProc.running = true
   }
 
   function playStation(uuid, name, url) {
@@ -497,10 +568,44 @@ finally:
   }
 
   Process {
+    id: languagesProc
+    command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent,
+      root.apiHost + "/json/languages?order=stationcount&reverse=true"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.loadingLanguages = false
+        var parsed = []
+        var ok = false
+        try {
+          var data = JSON.parse(String(text || ""))
+          if (Array.isArray(data)) {
+            ok = true
+            for (var i = 0; i < data.length; i++) {
+              var code = String((data[i] && data[i].iso_639) || "")
+              var name = String((data[i] && data[i].name) || "")
+              if (/^[A-Za-z]{2,3}$/.test(code) && name.length > 0) {
+                parsed.push({ code: code.toLowerCase(), name: name.charAt(0).toUpperCase() + name.slice(1) })
+              }
+            }
+          }
+        } catch (e) { }
+        root.allLanguages = parsed
+        root.languagesError = ok ? "" : "Couldn't load the language list. Check your connection."
+        root.updateLanguageMatches()
+      }
+    }
+  }
+
+  Process {
     id: stationsProc
     command: {
       var params = []
       if (state.countryCode) params.push("countrycode=" + encodeURIComponent(state.countryCode))
+      // Confirmed live: `languagecodes=` does not filter results at all
+      // (Radio Browser silently ignores it here); `language=` does a
+      // case-sensitive substring match against the station's lowercase
+      // `language` field, so the display name is lowercased before sending.
+      if (state.languageCode) params.push("language=" + encodeURIComponent(state.languageName.toLowerCase()))
       if (root.nameQuery.trim() !== "") params.push("name=" + encodeURIComponent(root.nameQuery.trim()))
       var tags = []
       if (state.tag) tags.push(state.tag)
@@ -508,7 +613,10 @@ finally:
       if (tags.length === 1) params.push("tag=" + encodeURIComponent(tags[0]))
       else if (tags.length > 1) params.push("tagList=" + encodeURIComponent(tags.join(",")))
       params.push("limit=80")
-      params.push("order=clickcount")
+      // Confirmed live: order=lastchange is not a valid Radio Browser order
+      // value and silently falls back to the API's default ordering;
+      // order=changetimestamp is the value that actually sorts by recency.
+      params.push("order=" + (state.sortOrder || "clickcount"))
       params.push("reverse=true")
       params.push("hidebroken=true")
       return ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent,
@@ -528,13 +636,20 @@ finally:
               var uuid = String((s && s.stationuuid) || "")
               var name = String((s && s.name) || "").trim()
               if (!uuid || !name || !/^https?:\/\//i.test(url)) continue
+              // Same scheme check already applied to the play URL above —
+              // an Image element can resolve non-http(s) schemes (e.g.
+              // file://), so an untrusted directory response shouldn't get
+              // to hand one straight to it.
+              var favicon = String((s && s.favicon) || "")
+              if (!/^https?:\/\//i.test(favicon)) favicon = ""
               list.push({
                 uuid: uuid,
                 name: name,
                 playUrl: url,
                 codec: String((s && s.codec) || ""),
                 bitrate: Number((s && s.bitrate) || 0),
-                tags: String((s && s.tags) || "")
+                tags: String((s && s.tags) || ""),
+                favicon: favicon
               })
             }
           }
@@ -601,6 +716,14 @@ finally:
       if (connected) {
         ipcRetryTimer.stop()
         write(JSON.stringify({ command: ["set_property", "pause", false] }) + "\n")
+        // Internet radio streams vary wildly in loudness station-to-station;
+        // mpv's bundled loudnorm filter evens that out. Fire-and-forget,
+        // same as the pause reset above — no reply is awaited or checked,
+        // and a failed af here must never block playback from starting.
+        // Confirmed against mpv's own input.rst: the runtime command is
+        // `af <operation> <value>` ("add" to append to the filter chain) —
+        // there is no separate "af-add" command in the JSON IPC protocol.
+        write(JSON.stringify({ command: ["af", "add", "lavfi=[loudnorm]"] }) + "\n")
         // Registered once per connection. mpv sends an immediate
         // property-change event with the current value on registration
         // (per its own client.h docs), then another on every future
@@ -797,6 +920,37 @@ finally:
             }
           }
 
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+
+            Button {
+              width: (parent.width - parent.spacing) / 2
+              text: "🔥 Trending"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.bodySmall
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY
+              bordered: true
+              active: state.sortOrder === "votes"
+              onClicked: root.toggleSortOrder("votes")
+            }
+
+            Button {
+              width: (parent.width - parent.spacing) / 2
+              text: "🆕 Recently added"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.bodySmall
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY
+              bordered: true
+              active: state.sortOrder === "changetimestamp"
+              onClicked: root.toggleSortOrder("changetimestamp")
+            }
+          }
+
           PanelSlider {
             width: parent.width
             bar: root.bar
@@ -990,6 +1144,109 @@ finally:
               }
             }
           }
+
+          PanelSeparator { foreground: root.bar.foreground }
+          PanelSectionHeader { text: "LANGUAGE (OPTIONAL)"; foreground: root.bar.foreground }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: state.languageCode !== ""
+
+            Text {
+              text: state.languageName
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Text {
+              text: "✕"
+              color: Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+
+              MouseArea {
+                anchors.fill: parent
+                anchors.margins: -Style.space(6)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.clearLanguage()
+              }
+            }
+          }
+
+          TextField {
+            id: languageField
+            width: parent.width
+            placeholderText: "Search any language…"
+            foreground: root.bar.foreground
+            onTextChanged: {
+              root.languageQuery = text
+              root.ensureLanguagesLoaded()
+              root.updateLanguageMatches()
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.languageQuery.trim() !== "" && root.loadingLanguages
+            text: "Searching languages…"
+            color: root.bar.foreground
+            opacity: 0.6
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.languagesError !== ""
+            text: root.languagesError
+            color: root.bar.foreground
+            wrapMode: Text.WordWrap
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: !root.loadingLanguages && root.languagesError === "" && root.languageQuery.trim() !== "" && root.allLanguages.length > 0 && root.languageMatches.length === 0
+            text: "No languages match “" + root.languageQuery.trim() + "”."
+            color: root.bar.foreground
+            opacity: 0.6
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.space(2)
+            visible: root.languageMatches.length > 0
+            Repeater {
+              model: root.languageMatches
+              delegate: Button {
+                required property var modelData
+                width: parent.width
+                leftAlign: true
+                text: modelData.name
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.space(4)
+                onClicked: {
+                  // Same deferred-selection pattern as the country search
+                  // results above (selectLanguage() clears this Repeater's
+                  // own model mid-click-handler otherwise).
+                  var pickedCode = modelData.code
+                  var pickedName = modelData.name
+                  Qt.callLater(function() {
+                    languageField.text = ""
+                    root.selectLanguage(pickedCode, pickedName)
+                  })
+                }
+              }
+            }
+          }
         }
 
         Rectangle {
@@ -1051,8 +1308,8 @@ finally:
             anchors.topMargin: Style.space(8)
             anchors.left: parent.left
             anchors.right: parent.right
-            visible: !root.loadingStations && root.stationsError === "" && state.countryCode === "" && root.nameQuery.trim() === ""
-            text: "Pick a country, or search by name, to tune in."
+            visible: !root.loadingStations && root.stationsError === "" && !root.hasLoadedStations()
+            text: "Pick a country, search by name, or pick a language, to tune in."
             color: root.bar.foreground
             opacity: 0.6
             font.family: root.bar.fontFamily
@@ -1064,8 +1321,8 @@ finally:
             anchors.topMargin: Style.space(8)
             anchors.left: parent.left
             anchors.right: parent.right
-            visible: !root.loadingStations && root.stationsError === "" && (state.countryCode !== "" || root.nameQuery.trim() !== "") && stationsModel.count === 0
-            text: "No stations found — try a different name, mood, or country."
+            visible: !root.loadingStations && root.stationsError === "" && root.hasLoadedStations() && stationsModel.count === 0
+            text: "No stations found — try a different name, mood, country, or language."
             color: root.bar.foreground
             opacity: 0.6
             font.family: root.bar.fontFamily
@@ -1093,6 +1350,7 @@ finally:
               required property string codec
               required property int bitrate
               required property string tags
+              required property string favicon
 
               width: stationsList.width
               height: Style.space(44)
@@ -1112,11 +1370,33 @@ finally:
                 onClicked: root.playStation(row.uuid, row.name, row.playUrl)
               }
 
-              Column {
+              // Only the API's own favicon field, already present in every
+              // stationsProc response — no new fetch. Left unshown entirely
+              // when empty, and allowed to fail silently (blank) on a dead
+              // or invalid URL, same as any other third-party image source.
+              Image {
+                id: faviconImage
+                visible: row.favicon !== ""
+                width: Style.space(24)
+                height: Style.space(24)
                 anchors.left: parent.left
+                anchors.leftMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                source: row.favicon
+                fillMode: Image.PreserveAspectFit
+                // Decode at (roughly) display resolution instead of full
+                // size — up to 80 rows can each carry a favicon, and some
+                // directory entries are large PNGs/ICOs.
+                sourceSize: Qt.size(48, 48)
+                asynchronous: true
+                smooth: true
+              }
+
+              Column {
+                anchors.left: faviconImage.visible ? faviconImage.right : parent.left
                 anchors.right: starButton.left
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: Style.space(10)
+                anchors.leftMargin: faviconImage.visible ? Style.space(6) : Style.space(10)
                 anchors.rightMargin: Style.space(6)
                 spacing: Style.space(1)
 
