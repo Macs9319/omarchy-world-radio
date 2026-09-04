@@ -17,8 +17,9 @@ import qs.Ui
 // instance, so this already answers to hardware media keys / MPRIS
 // (Play/Pause/Stop) without any extra flag here — confirmed live: pausing
 // through the shell's own media IPC toggles mpv's pause property. The
-// paused-property poll below exists so this panel's own Pause/Resume label
-// stays correct when playback was toggled that way instead of from here.
+// pause/metadata observers below exist so this panel's own Pause/Resume
+// label and now-playing title stay correct the instant playback changes
+// that way instead of from here.
 Panel {
   id: root
   moduleName: "ronnie.worldradio"
@@ -27,6 +28,12 @@ Panel {
   readonly property string apiHost: "https://de1.api.radio-browser.info"
   readonly property string userAgent: "OmarchyWorldRadio/1.0 (+https://omarchy.org)"
   readonly property int defaultVolume: setting("defaultVolume", 70)
+
+  // IDs for mpv's observe_property, referenced in both handleMpvMessage and
+  // the IPC connect handler — kept as named constants so a future observed
+  // property can't silently collide with one of these two.
+  readonly property int metadataObserveId: 1
+  readonly property int pauseObserveId: 2
 
   readonly property var curatedCountries: [
     { code: "US", name: "United States" },
@@ -436,12 +443,22 @@ finally:
   }
 
   function handleMpvMessage(line) {
+    // Guards against a message already in flight when the socket was torn
+    // down to switch stations (playStation()/stopPlayback() both flip
+    // ipcSocket.connected synchronously before this could fire again) from
+    // clobbering the state the panel already reset for the new station.
+    if (!ipcSocket.connected) return
     var msg
     try { msg = JSON.parse(line) } catch (e) { return }
-    if (!msg) return
-    if (msg.request_id === 1 && msg.data && typeof msg.data === "object") {
+    if (!msg || msg.event !== "property-change") return
+    if (msg.id === root.metadataObserveId && msg.data && typeof msg.data === "object") {
+      // mpv sends this immediately on observe_property registration (with
+      // the current value) and again on every future change, so this alone
+      // covers both the initial seed and instant live updates — confirmed
+      // against mpv's own client.h: "You always get an initial change
+      // notification."
       root.nowPlayingTitle = String(msg.data["icy-title"] || "")
-    } else if (msg.request_id === 2 && typeof msg.data === "boolean") {
+    } else if (msg.id === root.pauseObserveId && typeof msg.data === "boolean") {
       // Keeps the Pause/Resume label correct even when playback was toggled
       // from a hardware media key or another MPRIS controller, not this panel.
       root.paused = msg.data
@@ -574,18 +591,6 @@ finally:
     }
   }
 
-  Timer {
-    id: nowPlayingTimer
-    interval: 2000
-    repeat: true
-    onTriggered: {
-      if (!ipcSocket.connected) return
-      ipcSocket.write(JSON.stringify({ command: ["get_property", "metadata"], request_id: 1 }) + "\n")
-      ipcSocket.write(JSON.stringify({ command: ["get_property", "pause"], request_id: 2 }) + "\n")
-      ipcSocket.flush()
-    }
-  }
-
   Socket {
     id: ipcSocket
     parser: SplitParser {
@@ -596,11 +601,14 @@ finally:
       if (connected) {
         ipcRetryTimer.stop()
         write(JSON.stringify({ command: ["set_property", "pause", false] }) + "\n")
+        // Registered once per connection. mpv sends an immediate
+        // property-change event with the current value on registration
+        // (per its own client.h docs), then another on every future
+        // change — so this alone seeds state on connect *and* keeps it
+        // instantly in sync, with no separate get_property call needed.
+        write(JSON.stringify({ command: ["observe_property", root.metadataObserveId, "metadata"] }) + "\n")
+        write(JSON.stringify({ command: ["observe_property", root.pauseObserveId, "pause"] }) + "\n")
         flush()
-        nowPlayingTimer.triggered()
-        nowPlayingTimer.start()
-      } else {
-        nowPlayingTimer.stop()
       }
     }
   }

@@ -1,9 +1,17 @@
 # v2 remaining feature research
 
-Follow-up to `docs/v2-feature-research.md`, going deeper on the six items from
-that doc that haven't been turned into a spec yet. (Items #1, #6, #7 from
-that doc are already specced and published as issues #3, #2, #4 on
-`Macs9319/omarchy-world-radio` — not revisited here.)
+Follow-up to `docs/v2-feature-research.md`, going deeper on six of the eight
+items from that doc that hadn't been turned into a spec yet as of this
+research pass. (Items #1, #6, #7 from that doc are already specced and
+published as issues #3, #2, #4 on `Macs9319/omarchy-world-radio` — not
+revisited here.)
+
+**Not covered by this doc, and not yet specced either**: items #2 (the
+`/json/vote/{stationuuid}` endpoint) and #8 (a real buffering indicator via
+`cache-buffering-state`/`paused-for-cache`) from the original doc. Both were
+simply out of scope for this research pass, not resolved or dismissed —
+flagged here explicitly so this doc isn't mistaken for full coverage of
+everything still unspecced.
 
 Same rule as the original doc: primary sources only — live API calls, this
 machine's actual installed `.qmltypes`/`.qml` files, a live `hyprctl` test
@@ -100,21 +108,27 @@ choice, not a technical constraint); whether a manual lat/long entry
 fallback is worth the UI cost given `wttr.in`'s IP-detect already covers
 the common case.
 
-### #5 (orig.) — Trending / Recently added — **verdict: ready to spec (simpler than the original doc suggested)**
+### #5 (orig.) — Trending / Recently added — **verdict: ready to spec**
 
-**Correction to the original doc**: it proposed calling the dedicated
-`/stations/topvote` and `/stations/lastchange` endpoints. Confirmed live
-that this isn't necessary — the plugin's *existing* endpoint,
-`/json/stations/search`, already accepts `order=votes` and
-`order=lastchange` (alongside the `order=clickcount` it already sends) and
-**composes with every filter already in use** — confirmed live with
-`tag=jazz&order=votes&reverse=true` and with `order=lastchange&reverse=true`
-plus `hidebroken=true`, both returning correctly filtered/ordered results.
-Using `stationsProc`'s existing endpoint with a different `order=` value
-(instead of a second, separate endpoint) means "Trending" and "Recently
-added" can also respect whatever country/tag/decade filters are already
-selected, which the dedicated `/stations/topvote`/`/stations/lastchange`
-endpoints — being unfiltered, fixed lists — cannot do.
+**Not a correction — confirms and firms up what the original doc already
+proposed.** An earlier draft of this section mischaracterized the original
+doc as having proposed calling the dedicated `/stations/topvote` and
+`/stations/lastchange` endpoints; re-reading `docs/v2-feature-research.md`
+item #5 directly shows its own implementation note already said to reuse
+`stationsProc`'s existing command-building shape with `order=votes` instead
+of `order=clickcount` — the same conclusion this section reaches, not a
+fix to a mistake the original doc made. What *is* newly confirmed here,
+live: the plugin's *existing* endpoint, `/json/stations/search`, accepts
+`order=votes` and `order=lastchange` (alongside the `order=clickcount` it
+already sends) and **composes with every filter already in use** —
+confirmed with `tag=jazz&order=votes&reverse=true` and with
+`order=lastchange&reverse=true` plus `hidebroken=true`, both returning
+correctly filtered/ordered results. Using `stationsProc`'s existing
+endpoint with a different `order=` value (instead of a second, separate
+endpoint) means "Trending" and "Recently added" can also respect whatever
+country/tag/decade filters are already selected, which the dedicated
+`/stations/topvote`/`/stations/lastchange` endpoints — being unfiltered,
+fixed lists — cannot do.
 
 **Implementation sketch**: one more optional `order=` override in
 `stationsProc`'s command-building function (currently hardcoded to
@@ -262,7 +276,7 @@ narrow one).
 | - | ------- | ------- |
 | 3 | Language filter / mood-by-count | Ready to spec |
 | 4 | Geolocation search | Ready to spec (revised — a working, low-friction path exists via `wttr.in`, already trusted by Omarchy) |
-| 5 | Trending / Recently added | Ready to spec (simpler than originally proposed — reuse `stationsProc` with a different `order=`, not new endpoints) |
+| 5 | Trending / Recently added | Ready to spec (confirms the original doc's own proposal — reuse `stationsProc` with a different `order=`, not new endpoints) |
 | 9 | `GlobalShortcut` keybinding | Caveat resolved, but the answer is negative: still needs a Hyprland-side line, and a less ergonomic one than today's `o.bind()` for Omarchy users specifically. Not recommended as a replacement for the current README instructions. |
 | 10 | `Quickshell.Services.Notifications` for sending | Correction: wrong API for sending; not a feature to spec, and any future notification feature should keep using `notify-send`/D-Bus as originally avoided. |
 | 11 | `FileView.watchChanges` for live reload | Ready to spec; semantics confirmed, one real open question (undocumented debounce behavior) flagged for the spec to resolve. |
