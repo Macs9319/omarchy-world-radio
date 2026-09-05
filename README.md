@@ -43,8 +43,11 @@ catalog.
 - **Hardware media keys / MPRIS** — mpv's system-wide config already auto-loads the
   `mpv-mpris` script, so `XF86AudioPlay/Pause/Stop` and any MPRIS-aware widget control
   the radio too, with no extra flags needed here.
-- Two-pane layout: pickers scroll independently on the left, the station list gets its
-  own full-height pane on the right.
+- **Compact/Expand toggle** — shrink the panel to just the now-playing hero, transport
+  controls, and volume, or expand back to the full browser. The panel itself resizes,
+  and the choice persists for the session.
+- Two-pane layout (Expand mode): pickers scroll independently on the left, the station
+  list gets its own full-height pane on the right.
 
 ## Requirements
 
@@ -91,6 +94,9 @@ o.bind("SUPER + R", "World Radio", "omarchy-shell shell toggle ronnie.worldradio
 Pick a country, search by name, pick a language, or hit Near me — optionally add a mood
 and/or decade, or reorder the list by Trending/Recently added — then click a station to
 play it. Right-click the bar icon to stop, middle-click to pause/resume.
+
+Click **Compact** in the top-right of the panel to shrink it down to just playback
+controls once you've found a station; click **Expand** to bring the full browser back.
 
 ## Settings
 
