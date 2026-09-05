@@ -1220,6 +1220,7 @@ finally:
               spacing: Style.space(6)
 
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 iconText: "󰒮"
                 tooltipText: "Previous station"
                 foreground: root.bar.foreground
@@ -1232,6 +1233,7 @@ finally:
               }
 
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 iconText: root.paused ? "󰐊" : "󰏤"
                 tooltipText: root.paused ? "Resume playback" : "Pause playback"
                 foreground: root.bar.foreground
@@ -1244,6 +1246,7 @@ finally:
               }
 
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 iconText: "󰒭"
                 tooltipText: "Next station"
                 foreground: root.bar.foreground
@@ -1256,7 +1259,8 @@ finally:
               }
 
               Button {
-                iconText: "⏹"
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰓛"
                 tooltipText: "Stop"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
@@ -1268,6 +1272,7 @@ finally:
               }
 
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 iconText: "🎲"
                 tooltipText: "Surprise me"
                 foreground: root.bar.foreground
@@ -1283,6 +1288,7 @@ finally:
               // in Compact — see docs/expand-compact-view-research.md and
               // issue #11.
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 visible: !state.compactView
                 iconText: "🔥"
                 tooltipText: "Trending"
@@ -1295,6 +1301,7 @@ finally:
               }
 
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 visible: !state.compactView
                 iconText: "🆕"
                 tooltipText: "Recently added"
@@ -1307,6 +1314,7 @@ finally:
               }
 
               Button {
+                anchors.verticalCenter: parent.verticalCenter
                 visible: !state.compactView
                 iconText: "📍"
                 tooltipText: "Near me"
