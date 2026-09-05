@@ -902,12 +902,11 @@ finally:
     command: ["curl", "-sS", "--max-time", "6", "-A", root.userAgent, root.apiHost + "/json/vote/" + root.voteInFlightUuid]
     stdout: StdioCollector {
       onStreamFinished: {
-        // Mirrors onExited's own guard below: if onExited has already run
-        // (empirically it doesn't, on this Quickshell version — see its
-        // comment — but this keeps the pair correct without depending on
-        // that holding true), voteInFlightUuid is already cleared and
-        // onExited already recorded its own backstop result, which this
-        // must not overwrite with an empty/misattributed uuid.
+        // If onExited's backstop below has already run, it was for a
+        // genuine process failure (it only acts on a non-zero exit code)
+        // and already recorded that; this must not overwrite it — either
+        // with a real-but-oddly-delayed result for the same request, or
+        // (if a new vote had already started) an empty/misattributed uuid.
         if (root.voteInFlightUuid === "") return
         var votedUuid = root.voteInFlightUuid
         root.voteInFlightUuid = ""
@@ -926,15 +925,16 @@ finally:
       }
     }
     onExited: function(code, status) {
-      // A non-empty voteInFlightUuid here means onStreamFinished never
-      // ran for this invocation — a genuine backstop case (e.g. curl
-      // failed to spawn), not the normal path, which already cleared it.
-      // This relies on onStreamFinished always firing before onExited for
-      // a normal completion — confirmed empirically on this Quickshell
-      // version (not just assumed): a standalone Process+StdioCollector
-      // test against this same endpoint showed onStreamFinished firing
-      // and completing before onExited, consistently across repeated runs.
-      if (root.voteInFlightUuid === "") return
+      // Only acts on a genuine process failure (curl crashed or never
+      // spawned) — a normal exit (code 0) is left entirely to
+      // onStreamFinished, even if it fires fractionally after this,
+      // rather than guessing based on which of the two fires first. A
+      // successful curl has already written its full response into the
+      // pipe by the time it exits, so onStreamFinished still reliably
+      // follows; unconditionally treating "onExited got here first" as
+      // failure (an earlier version of this code did) could otherwise
+      // show a false ✕ for a vote that actually succeeded.
+      if (code === 0 || root.voteInFlightUuid === "") return
       // Without this, voteInFlightUuid (and thus every future vote) would
       // be stuck forever, and the button would silently revert to "👍"
       // with no indication anything went wrong — matching the error
