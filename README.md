@@ -1,5 +1,7 @@
 # World Radio
 
+[![CI](https://github.com/Macs9319/omarchy-world-radio/actions/workflows/ci.yml/badge.svg)](https://github.com/Macs9319/omarchy-world-radio/actions/workflows/ci.yml)
+
 An [Omarchy](https://omarchy.org/) shell plugin: pick a country and (optionally) a mood
 or decade, then listen to a live internet radio station from there — a lightweight nod
 to [radiooooo.com](https://app.radiooooo.com/)'s "spin the globe" idea, built entirely on
