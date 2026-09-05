@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sanity-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate manifest.json
+        run: |
+          python3 -c "
+          import json, os, sys
+
+          with open('manifest.json') as f:
+              manifest = json.load(f)
+
+          entry = manifest.get('entryPoints', {}).get('barWidget')
+          if not entry:
+              sys.exit('manifest.json: entryPoints.barWidget is missing')
+          if not os.path.isfile(entry):
+              sys.exit(f'manifest.json: entryPoints.barWidget points at {entry!r}, which does not exist')
+
+          print(f'manifest.json OK — entryPoints.barWidget -> {entry}')
+          "
+
+      - name: Check Panel.qml brace balance
+        run: |
+          python3 -c "
+          import sys
+
+          text = open('Panel.qml').read()
+          depth = 0
+          for ch in text:
+              if ch == '{':
+                  depth += 1
+              elif ch == '}':
+                  depth -= 1
+                  if depth < 0:
+                      sys.exit('Panel.qml: unbalanced braces (an extra closing brace was found)')
+
+          if depth != 0:
+              sys.exit(f'Panel.qml: unbalanced braces (final depth {depth}, expected 0)')
+
+          print('Panel.qml brace balance OK')
+          "
