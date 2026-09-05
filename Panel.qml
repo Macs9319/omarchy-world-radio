@@ -28,6 +28,10 @@ Panel {
   readonly property string apiHost: "https://de1.api.radio-browser.info"
   readonly property string userAgent: "OmarchyWorldRadio/1.0 (+https://omarchy.org)"
   readonly property int defaultVolume: setting("defaultVolume", 70)
+  // Shared by playStation() (click-tracking) and voteForStation() — both
+  // build a URL from an API-supplied stationuuid and need the same shape
+  // check before trusting it.
+  readonly property var stationUuidPattern: /^[0-9a-fA-F-]{8,64}$/
 
   // IDs for mpv's observe_property, referenced in both handleMpvMessage and
   // the IPC connect handler — kept as named constants so a future observed
@@ -95,6 +99,31 @@ Panel {
   // consumed by onExited so a killed fetch's belated result can't clobber
   // state a newer fetch (or the clear) already set.
   property bool stationsSwitching: false
+
+  // "👍 vote" state. Transient (not in `state`) — vote feedback is
+  // inherently momentary, not something worth surviving a shell restart.
+  // Unlike stationsProc/geoLocationProc, a new vote never kills an
+  // in-flight one (voteForStation() below just ignores the click) —
+  // votes are cheap, infrequent, and keyed per-station-uuid, so there's
+  // no "supersede the old one" case to reconcile, and no possibility of
+  // a killed request's stale response racing a fresh one for the same
+  // reused Process.
+  // Both the uuid voteProc's command is currently built from and the uuid
+  // whose row should show the in-flight state — always the same value
+  // (voteForStation() is single-flight, never superseded mid-request),
+  // so one property covers both rather than two kept manually in sync.
+  property string voteInFlightUuid: ""
+  // voteUuid/voteOk are a single shared slot, not a per-station map:
+  // voting on a second station while the first's feedback is still
+  // showing will replace it early once the second vote completes,
+  // rather than each row tracking its own independent feedback window.
+  // Accepted deliberately — a per-uuid feedback map would be real
+  // complexity for a cosmetic-only edge case (two votes within the same
+  // few seconds), disproportionate to how small this feature is meant
+  // to be; the failure mode is a checkmark clearing a little early, never
+  // wrong or stuck data.
+  property string voteUuid: ""
+  property bool voteOk: false
 
   property bool loadingCountries: false
   property string countriesError: ""
@@ -233,6 +262,15 @@ finally:
     onTriggered: root.flushFavorites()
   }
 
+  // Clears a completed vote's row-level feedback (voteUuid) a few seconds
+  // after it's shown, so a success/failure icon doesn't linger forever.
+  Timer {
+    id: voteFeedbackTimer
+    interval: 3000
+    repeat: false
+    onTriggered: root.voteUuid = ""
+  }
+
   // Debounces the name-search field so a request fires ~350ms after the last
   // keystroke rather than on every character. reloadOrClear() handles the
   // "nothing left to search by at all" case by clearing the list instead
@@ -309,6 +347,29 @@ finally:
     root.favorites = next
     root.scheduleFavoritesSave()
     root.resortStations()
+  }
+
+  // Ignores the click (rather than killing and restarting, as
+  // loadStations()/findNearMe() do) whenever any vote is already in
+  // flight — votes are cheap and infrequent enough that making the user
+  // wait for the previous one to resolve is simpler and fully correct,
+  // with no killed-process-vs-fresh-request ambiguity to reconcile.
+  function voteForStation(uuid) {
+    // Same shape check already applied before clickProc's click-tracking
+    // request in playStation() — the station data driving this call comes
+    // from the same untrusted API response, so it gets the same guard.
+    if (!uuid || !root.stationUuidPattern.test(uuid) || voteProc.running) return
+    root.voteInFlightUuid = uuid
+    // Only clears voteUuid/stops the timer when re-voting the *same* row
+    // that's currently showing feedback — otherwise this would revert to
+    // the idle icon mid-request, misleadingly looking like nothing is
+    // happening. A *different* row's still-displaying feedback is left
+    // alone; voteProc's own completion handler owns setting/timing that.
+    if (root.voteUuid === uuid) {
+      voteFeedbackTimer.stop()
+      root.voteUuid = ""
+    }
+    voteProc.running = true
   }
 
   // Stable-partitions the currently loaded list so favorited stations sit
@@ -552,7 +613,7 @@ finally:
       ipcRetryTimer.restart()
     })
 
-    if (/^[0-9a-fA-F-]{8,64}$/.test(uuid)) {
+    if (root.stationUuidPattern.test(uuid)) {
       clickProc.running = false
       Qt.callLater(function() { clickProc.running = true })
     }
@@ -835,6 +896,56 @@ finally:
   }
 
   Process { id: clickProc; command: ["curl", "-sS", "--max-time", "6", "-A", root.userAgent, root.apiHost + "/json/url/" + state.stationUuid] }
+
+  Process {
+    id: voteProc
+    command: ["curl", "-sS", "--max-time", "6", "-A", root.userAgent, root.apiHost + "/json/vote/" + root.voteInFlightUuid]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        // Mirrors onExited's own guard below: if onExited has already run
+        // (empirically it doesn't, on this Quickshell version — see its
+        // comment — but this keeps the pair correct without depending on
+        // that holding true), voteInFlightUuid is already cleared and
+        // onExited already recorded its own backstop result, which this
+        // must not overwrite with an empty/misattributed uuid.
+        if (root.voteInFlightUuid === "") return
+        var votedUuid = root.voteInFlightUuid
+        root.voteInFlightUuid = ""
+        var ok = false
+        try {
+          // Confirmed live: the vote endpoint always returns HTTP 200 —
+          // success or failure (rate-limited, invalid station id, etc.)
+          // is only distinguishable via this "ok" field, never the HTTP
+          // status or curl's own exit code.
+          var data = JSON.parse(String(text || ""))
+          ok = !!(data && data.ok === true)
+        } catch (e) { }
+        root.voteUuid = votedUuid
+        root.voteOk = ok
+        voteFeedbackTimer.restart()
+      }
+    }
+    onExited: function(code, status) {
+      // A non-empty voteInFlightUuid here means onStreamFinished never
+      // ran for this invocation — a genuine backstop case (e.g. curl
+      // failed to spawn), not the normal path, which already cleared it.
+      // This relies on onStreamFinished always firing before onExited for
+      // a normal completion — confirmed empirically on this Quickshell
+      // version (not just assumed): a standalone Process+StdioCollector
+      // test against this same endpoint showed onStreamFinished firing
+      // and completing before onExited, consistently across repeated runs.
+      if (root.voteInFlightUuid === "") return
+      // Without this, voteInFlightUuid (and thus every future vote) would
+      // be stuck forever, and the button would silently revert to "👍"
+      // with no indication anything went wrong — matching the error
+      // feedback the stationsProc/geoLocationProc backstops already give.
+      var votedUuid = root.voteInFlightUuid
+      root.voteInFlightUuid = ""
+      root.voteUuid = votedUuid
+      root.voteOk = false
+      voteFeedbackTimer.restart()
+    }
+  }
 
   Process {
     id: mpvProc
@@ -1629,7 +1740,7 @@ finally:
 
               Column {
                 anchors.left: faviconImage.visible ? faviconImage.right : parent.left
-                anchors.right: starButton.left
+                anchors.right: voteButton.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: faviconImage.visible ? Style.space(6) : Style.space(10)
                 anchors.rightMargin: Style.space(6)
@@ -1655,6 +1766,59 @@ finally:
               }
 
               Text {
+                id: voteButton
+                text: root.voteUuid === row.uuid ? (root.voteOk ? "✓" : "✕") : "👍"
+                // Success gets the same accent already used for an active
+                // filter/favorite; failure isn't a color this app uses
+                // anywhere (no error-red exists in this file), so it gets
+                // the undarkened foreground instead of the same muted tone
+                // as the idle icon, rather than blending in as "just 👍".
+                color: root.voteUuid === row.uuid
+                  ? (root.voteOk ? Color.accent : root.bar.foreground)
+                  : Qt.darker(root.bar.foreground, 1.4)
+                // Dims fully for the row actually voting, and slightly for
+                // every other row while any vote is in flight — a click on
+                // another row is silently ignored (voteForStation()'s
+                // single-flight guard), so this at least signals "busy"
+                // instead of looking fully idle and interactive.
+                opacity: root.voteInFlightUuid === row.uuid ? 0.4 : (voteProc.running ? 0.7 : 1.0)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                // Fixed width + centered text, unlike starButton (whose
+                // two Nerd Font glyphs already share the same intrinsic
+                // width): "👍" and "✓"/"✕" don't, so anchoring by
+                // right-edge alone would shift this icon (and the text
+                // Column anchored to its left) sideways on every vote.
+                width: Style.space(20)
+                horizontalAlignment: Text.AlignHCenter
+                anchors.right: starButton.left
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+
+                // Expands outward on every side except toward starButton —
+                // a uniform -Style.space(6) here would reach exactly
+                // Style.space(6) past this icon on the right, meeting (and
+                // overlapping) starButton's own -Style.space(6) expansion
+                // to its left, since the two icons only sit Style.space(6)
+                // apart to begin with. Splitting that gap in half instead
+                // of doubling it into an overlap keeps a click nearest
+                // each icon going to that icon.
+                MouseArea {
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.topMargin: -Style.space(6)
+                  anchors.bottomMargin: -Style.space(6)
+                  anchors.leftMargin: -Style.space(6)
+                  anchors.rightMargin: -Style.space(3)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.voteForStation(row.uuid)
+                }
+              }
+
+              Text {
                 id: starButton
                 text: root.isFavorite(row.uuid) ? "󰓎" : "󰓒"
                 color: root.isFavorite(row.uuid) ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
@@ -1664,9 +1828,19 @@ finally:
                 anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
 
+                // Mirrors voteButton's MouseArea above: expands less
+                // toward voteButton (its only neighbor) than on every
+                // other side, so the two hit-areas meet rather than
+                // overlap.
                 MouseArea {
-                  anchors.fill: parent
-                  anchors.margins: -Style.space(6)
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.topMargin: -Style.space(6)
+                  anchors.bottomMargin: -Style.space(6)
+                  anchors.leftMargin: -Style.space(3)
+                  anchors.rightMargin: -Style.space(6)
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.toggleFavorite(row)
