@@ -79,6 +79,11 @@ Panel {
     property string stationName: ""
     property string stationUrl: ""
     property bool playing: false
+    // Expand (today's full two-pane browser) vs Compact (hero + transport +
+    // volume only, panel shrunk to fit). Same persistence tier as every
+    // other field above: survives a shell config reload, not a full
+    // restart — see docs/expand-compact-view-research.md.
+    property bool compactView: false
   }
 
   property bool paused: false
@@ -474,6 +479,12 @@ finally:
   function toggleSortOrder(order) {
     state.sortOrder = state.sortOrder === order ? "" : order
     if (root.hasLoadedStations()) root.loadStations()
+  }
+
+  // Pure layout/sizing switch — never touches playback, filters, or the
+  // loaded station list, so nothing here needs a reload.
+  function toggleCompactView() {
+    state.compactView = !state.compactView
   }
 
   function selectLanguage(code, name) {
@@ -1046,14 +1057,23 @@ finally:
     // Two panes side by side: a fixed-width left column for the pickers,
     // and a right pane that gets whatever's left for the station list — so
     // the list isn't squeezed into whatever's left below a tall stack of
-    // controls.
-    contentWidth: panel.fittedContentWidth(Style.space(780))
-    // A deliberately oversized desired height clamps to
+    // controls. Compact drops the right pane and most of the left column,
+    // so it gets its own, much narrower width instead: the fixed 320px
+    // column plus the card's real horizontal insets on both sides (border
+    // + popup padding, ~16px each at default theme settings — confirmed
+    // against KeyboardPanel/BorderSurface's own contentLeftInset/
+    // contentRightInset, not guessed), so the column doesn't crowd the
+    // card's border. See docs/expand-compact-view-research.md.
+    contentWidth: panel.fittedContentWidth(state.compactView ? Style.space(352) : Style.space(780))
+    // Expand: a deliberately oversized desired height clamps to
     // availableCardHeight inside fittedContentHeight — i.e. the panel
     // always grows to fill the screen down to the bar/margins, so the
     // station list below gets all the leftover room instead of a small
     // fixed-height peephole.
-    contentHeight: panel.fittedContentHeight(Style.space(4000))
+    // Compact: no station list to fill room for, so — like every other
+    // Omarchy shell panel — the real content column's own implicitHeight
+    // is passed instead, and the panel shrinks to fit it.
+    contentHeight: panel.fittedContentHeight(state.compactView ? leftColumnContent.implicitHeight : Style.space(4000))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -1122,11 +1142,33 @@ finally:
                 anchors.verticalCenter: parent.verticalCenter
               }
 
+              // Always reachable in both modes, unlike every other control
+              // in this column — it's the only way back to Expand once
+              // Compact has hidden everything else.
+              Text {
+                id: modeToggle
+                text: state.compactView ? "Expand" : "Compact"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(6)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleCompactView()
+                }
+              }
+
               Column {
                 id: heroLabels
                 anchors.left: heroIcon.right
                 anchors.leftMargin: Style.space(14)
-                anchors.right: parent.right
+                anchors.right: modeToggle.left
+                anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(2)
 
@@ -1241,98 +1283,110 @@ finally:
               }
             }
 
-            Row {
+            // ---------- Expand-only: sort, geo ----------
+            // Compact hides this whole group (visible: false, not just
+            // opacity/height, so it also drops out of tab order — see
+            // docs/expand-compact-view-research.md and issue #11). Nothing
+            // inside is reset: switching back to Expand shows exactly what
+            // was here before switching away.
+            Column {
               width: parent.width
-              spacing: Style.space(6)
+              spacing: Style.space(12)
+              visible: !state.compactView
 
-              Button {
-                width: (parent.width - parent.spacing) / 2
-                text: "🔥 Trending"
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                fontSize: Style.font.bodySmall
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
-                active: state.sortOrder === "votes"
-                onClicked: root.toggleSortOrder("votes")
-              }
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
 
-              Button {
-                width: (parent.width - parent.spacing) / 2
-                text: "🆕 Recently added"
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                fontSize: Style.font.bodySmall
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
-                active: state.sortOrder === "changetimestamp"
-                onClicked: root.toggleSortOrder("changetimestamp")
-              }
-            }
+                Button {
+                  width: (parent.width - parent.spacing) / 2
+                  text: "🔥 Trending"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  fontSize: Style.font.bodySmall
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.spacing.controlPaddingY
+                  bordered: true
+                  active: state.sortOrder === "votes"
+                  onClicked: root.toggleSortOrder("votes")
+                }
 
-            Button {
-              width: parent.width
-              text: "📍 Near me"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              active: root.geoActive
-              onClicked: root.findNearMe()
-            }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(6)
-              visible: root.geoActive
-
-              Text {
-                width: parent.width - geoClearButton.width - parent.spacing
-                text: root.geoLabel
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
-              }
-
-              Text {
-                id: geoClearButton
-                text: "✕"
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.margins: -Style.space(6)
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.clearGeo()
+                Button {
+                  width: (parent.width - parent.spacing) / 2
+                  text: "🆕 Recently added"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  fontSize: Style.font.bodySmall
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.spacing.controlPaddingY
+                  bordered: true
+                  active: state.sortOrder === "changetimestamp"
+                  onClicked: root.toggleSortOrder("changetimestamp")
                 }
               }
-            }
 
-            Text {
-              width: parent.width
-              visible: root.loadingGeo
-              text: "Finding your location…"
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+              Button {
+                width: parent.width
+                text: "📍 Near me"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                bordered: true
+                active: root.geoActive
+                onClicked: root.findNearMe()
+              }
 
-            Text {
-              width: parent.width
-              visible: root.geoError !== ""
-              text: root.geoError
-              color: root.bar.foreground
-              wrapMode: Text.WordWrap
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+                visible: root.geoActive
+
+                Text {
+                  width: parent.width - geoClearButton.width - parent.spacing
+                  text: root.geoLabel
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  id: geoClearButton
+                  text: "✕"
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+
+                  MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(6)
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.clearGeo()
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.loadingGeo
+                text: "Finding your location…"
+                color: root.bar.foreground
+                opacity: 0.6
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width
+                visible: root.geoError !== ""
+                text: root.geoError
+                color: root.bar.foreground
+                wrapMode: Text.WordWrap
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
 
             PanelSlider {
@@ -1353,284 +1407,292 @@ finally:
               }
             }
 
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "SEARCH BY NAME"; foreground: root.bar.foreground }
-
-            TextField {
-              id: nameField
-              width: parent.width
-              placeholderText: "Station name…"
-              foreground: root.bar.foreground
-              onTextChanged: {
-                root.nameQuery = text
-                nameSearchTimer.restart()
-              }
-            }
-
-            Text {
-              width: parent.width
-              visible: root.nameQuery.trim() !== ""
-              text: state.countryCode !== ""
-                ? "Matching “" + root.nameQuery.trim() + "” in " + state.countryName
-                : "Matching “" + root.nameQuery.trim() + "” worldwide"
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
-
-            Flow {
-              width: parent.width
-              spacing: Style.space(6)
-              Repeater {
-                model: root.curatedCountries
-                delegate: Button {
-                  required property var modelData
-                  text: root.flagFor(modelData.code) + " " + modelData.name
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  fontSize: Style.font.bodySmall
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.space(4)
-                  bordered: true
-                  active: state.countryCode === modelData.code
-                  onClicked: root.selectCountry(modelData.code, modelData.name)
-                }
-              }
-            }
-
-            TextField {
-              id: countryField
-              width: parent.width
-              placeholderText: "Search any country…"
-              foreground: root.bar.foreground
-              onTextChanged: {
-                root.countryQuery = text
-                root.ensureCountriesLoaded()
-                root.updateCountryMatches()
-              }
-            }
-
-            Text {
-              width: parent.width
-              visible: root.countryQuery.trim() !== "" && root.loadingCountries
-              text: "Searching countries…"
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              width: parent.width
-              visible: root.countriesError !== ""
-              text: root.countriesError
-              color: root.bar.foreground
-              wrapMode: Text.WordWrap
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              width: parent.width
-              visible: !root.loadingCountries && root.countriesError === "" && root.countryQuery.trim() !== "" && root.allCountries.length > 0 && root.countryMatches.length === 0
-              text: "No countries match “" + root.countryQuery.trim() + "”."
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
+            // ---------- Expand-only: search, country, mood, decade, language ----------
+            // Same visible:false hide as the sort/geo group above.
             Column {
               width: parent.width
-              spacing: Style.space(2)
-              visible: root.countryMatches.length > 0
-              Repeater {
-                model: root.countryMatches
-                delegate: Button {
-                  required property var modelData
-                  width: parent.width
-                  leftAlign: true
-                  text: root.flagFor(modelData.code) + "  " + modelData.name
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.space(4)
-                  onClicked: {
-                    // Deferred: selectCountry() clears root.countryMatches,
-                    // which is this Repeater's own model — doing that
-                    // synchronously from inside this delegate's own click
-                    // handler destroys the Button mid-handler (the first-
-                    // party notifications service hits the same class of
-                    // bug and documents it as Qt.callLater avoiding a
-                    // QV4::Object::insertMember crash when a Repeater is
-                    // mid-incubation while its model is mutated). Without
-                    // this, the handler aborted after clearing the search
-                    // text and never reached selectCountry() at all, so
-                    // picking a search result silently failed to load its
-                    // stations — confirmed via a live "ReferenceError: root
-                    // is not defined" at this exact line in journalctl.
-                    var pickedCode = modelData.code
-                    var pickedName = modelData.name
-                    Qt.callLater(function() {
-                      countryField.text = ""
-                      root.selectCountry(pickedCode, pickedName)
-                    })
+              spacing: Style.space(12)
+              visible: !state.compactView
+
+              PanelSeparator { foreground: root.bar.foreground }
+              PanelSectionHeader { text: "SEARCH BY NAME"; foreground: root.bar.foreground }
+
+              TextField {
+                id: nameField
+                width: parent.width
+                placeholderText: "Station name…"
+                foreground: root.bar.foreground
+                onTextChanged: {
+                  root.nameQuery = text
+                  nameSearchTimer.restart()
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.nameQuery.trim() !== ""
+                text: state.countryCode !== ""
+                  ? "Matching “" + root.nameQuery.trim() + "” in " + state.countryName
+                  : "Matching “" + root.nameQuery.trim() + "” worldwide"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              PanelSeparator { foreground: root.bar.foreground }
+              PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+                Repeater {
+                  model: root.curatedCountries
+                  delegate: Button {
+                    required property var modelData
+                    text: root.flagFor(modelData.code) + " " + modelData.name
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.bodySmall
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.space(4)
+                    bordered: true
+                    active: state.countryCode === modelData.code
+                    onClicked: root.selectCountry(modelData.code, modelData.name)
                   }
                 }
               }
-            }
 
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "MOOD (OPTIONAL)"; foreground: root.bar.foreground }
-
-            Flow {
-              width: parent.width
-              spacing: Style.space(6)
-              Repeater {
-                model: root.curatedTags
-                delegate: Button {
-                  required property var modelData
-                  text: modelData
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  fontSize: Style.font.bodySmall
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.space(4)
-                  bordered: true
-                  active: state.tag === modelData
-                  onClicked: root.toggleTag(modelData)
+              TextField {
+                id: countryField
+                width: parent.width
+                placeholderText: "Search any country…"
+                foreground: root.bar.foreground
+                onTextChanged: {
+                  root.countryQuery = text
+                  root.ensureCountriesLoaded()
+                  root.updateCountryMatches()
                 }
               }
-            }
-
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "DECADE (OPTIONAL)"; foreground: root.bar.foreground }
-
-            Flow {
-              width: parent.width
-              spacing: Style.space(6)
-              Repeater {
-                model: root.curatedDecades
-                delegate: Button {
-                  required property var modelData
-                  text: modelData
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  fontSize: Style.font.bodySmall
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.space(4)
-                  bordered: true
-                  active: state.decade === modelData
-                  onClicked: root.toggleDecade(modelData)
-                }
-              }
-            }
-
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "LANGUAGE (OPTIONAL)"; foreground: root.bar.foreground }
-
-            Row {
-              width: parent.width
-              spacing: Style.space(6)
-              visible: state.languageCode !== ""
 
               Text {
-                width: parent.width - languageClearButton.width - parent.spacing
-                text: state.languageName
+                width: parent.width
+                visible: root.countryQuery.trim() !== "" && root.loadingCountries
+                text: "Searching countries…"
                 color: root.bar.foreground
+                opacity: 0.6
                 font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
+                font.pixelSize: Style.font.caption
               }
 
               Text {
-                id: languageClearButton
-                text: "✕"
-                color: Qt.darker(root.bar.foreground, 1.4)
+                width: parent.width
+                visible: root.countriesError !== ""
+                text: root.countriesError
+                color: root.bar.foreground
+                wrapMode: Text.WordWrap
                 font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
+                font.pixelSize: Style.font.caption
+              }
 
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.margins: -Style.space(6)
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.clearLanguage()
+              Text {
+                width: parent.width
+                visible: !root.loadingCountries && root.countriesError === "" && root.countryQuery.trim() !== "" && root.allCountries.length > 0 && root.countryMatches.length === 0
+                text: "No countries match “" + root.countryQuery.trim() + "”."
+                color: root.bar.foreground
+                opacity: 0.6
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(2)
+                visible: root.countryMatches.length > 0
+                Repeater {
+                  model: root.countryMatches
+                  delegate: Button {
+                    required property var modelData
+                    width: parent.width
+                    leftAlign: true
+                    text: root.flagFor(modelData.code) + "  " + modelData.name
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.space(4)
+                    onClicked: {
+                      // Deferred: selectCountry() clears root.countryMatches,
+                      // which is this Repeater's own model — doing that
+                      // synchronously from inside this delegate's own click
+                      // handler destroys the Button mid-handler (the first-
+                      // party notifications service hits the same class of
+                      // bug and documents it as Qt.callLater avoiding a
+                      // QV4::Object::insertMember crash when a Repeater is
+                      // mid-incubation while its model is mutated). Without
+                      // this, the handler aborted after clearing the search
+                      // text and never reached selectCountry() at all, so
+                      // picking a search result silently failed to load its
+                      // stations — confirmed via a live "ReferenceError: root
+                      // is not defined" at this exact line in journalctl.
+                      var pickedCode = modelData.code
+                      var pickedName = modelData.name
+                      Qt.callLater(function() {
+                        countryField.text = ""
+                        root.selectCountry(pickedCode, pickedName)
+                      })
+                    }
+                  }
                 }
               }
-            }
 
-            TextField {
-              id: languageField
-              width: parent.width
-              placeholderText: "Search any language…"
-              foreground: root.bar.foreground
-              onTextChanged: {
-                root.languageQuery = text
-                root.ensureLanguagesLoaded()
-                root.updateLanguageMatches()
+              PanelSeparator { foreground: root.bar.foreground }
+              PanelSectionHeader { text: "MOOD (OPTIONAL)"; foreground: root.bar.foreground }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+                Repeater {
+                  model: root.curatedTags
+                  delegate: Button {
+                    required property var modelData
+                    text: modelData
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.bodySmall
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.space(4)
+                    bordered: true
+                    active: state.tag === modelData
+                    onClicked: root.toggleTag(modelData)
+                  }
+                }
               }
-            }
 
-            Text {
-              width: parent.width
-              visible: root.languageQuery.trim() !== "" && root.loadingLanguages
-              text: "Searching languages…"
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+              PanelSeparator { foreground: root.bar.foreground }
+              PanelSectionHeader { text: "DECADE (OPTIONAL)"; foreground: root.bar.foreground }
 
-            Text {
-              width: parent.width
-              visible: root.languagesError !== ""
-              text: root.languagesError
-              color: root.bar.foreground
-              wrapMode: Text.WordWrap
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+                Repeater {
+                  model: root.curatedDecades
+                  delegate: Button {
+                    required property var modelData
+                    text: modelData
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.bodySmall
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.space(4)
+                    bordered: true
+                    active: state.decade === modelData
+                    onClicked: root.toggleDecade(modelData)
+                  }
+                }
+              }
 
-            Text {
-              width: parent.width
-              visible: !root.loadingLanguages && root.languagesError === "" && root.languageQuery.trim() !== "" && root.allLanguages.length > 0 && root.languageMatches.length === 0
-              text: "No languages match “" + root.languageQuery.trim() + "”."
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+              PanelSeparator { foreground: root.bar.foreground }
+              PanelSectionHeader { text: "LANGUAGE (OPTIONAL)"; foreground: root.bar.foreground }
 
-            Column {
-              width: parent.width
-              spacing: Style.space(2)
-              visible: root.languageMatches.length > 0
-              Repeater {
-                model: root.languageMatches
-                delegate: Button {
-                  required property var modelData
-                  width: parent.width
-                  leftAlign: true
-                  text: modelData.name
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.space(4)
-                  onClicked: {
-                    // Same deferred-selection pattern as the country search
-                    // results above (selectLanguage() clears this Repeater's
-                    // own model mid-click-handler otherwise).
-                    var pickedCode = modelData.code
-                    var pickedName = modelData.name
-                    Qt.callLater(function() {
-                      languageField.text = ""
-                      root.selectLanguage(pickedCode, pickedName)
-                    })
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+                visible: state.languageCode !== ""
+
+                Text {
+                  width: parent.width - languageClearButton.width - parent.spacing
+                  text: state.languageName
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  id: languageClearButton
+                  text: "✕"
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+
+                  MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(6)
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.clearLanguage()
+                  }
+                }
+              }
+
+              TextField {
+                id: languageField
+                width: parent.width
+                placeholderText: "Search any language…"
+                foreground: root.bar.foreground
+                onTextChanged: {
+                  root.languageQuery = text
+                  root.ensureLanguagesLoaded()
+                  root.updateLanguageMatches()
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: root.languageQuery.trim() !== "" && root.loadingLanguages
+                text: "Searching languages…"
+                color: root.bar.foreground
+                opacity: 0.6
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width
+                visible: root.languagesError !== ""
+                text: root.languagesError
+                color: root.bar.foreground
+                wrapMode: Text.WordWrap
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width
+                visible: !root.loadingLanguages && root.languagesError === "" && root.languageQuery.trim() !== "" && root.allLanguages.length > 0 && root.languageMatches.length === 0
+                text: "No languages match “" + root.languageQuery.trim() + "”."
+                color: root.bar.foreground
+                opacity: 0.6
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(2)
+                visible: root.languageMatches.length > 0
+                Repeater {
+                  model: root.languageMatches
+                  delegate: Button {
+                    required property var modelData
+                    width: parent.width
+                    leftAlign: true
+                    text: modelData.name
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.space(4)
+                    onClicked: {
+                      // Same deferred-selection pattern as the country search
+                      // results above (selectLanguage() clears this Repeater's
+                      // own model mid-click-handler otherwise).
+                      var pickedCode = modelData.code
+                      var pickedName = modelData.name
+                      Qt.callLater(function() {
+                        languageField.text = ""
+                        root.selectLanguage(pickedCode, pickedName)
+                      })
+                    }
                   }
                 }
               }
@@ -1640,6 +1702,7 @@ finally:
 
         Rectangle {
           id: columnDivider
+          visible: !state.compactView
           width: 1
           color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
           anchors.left: leftColumn.right
@@ -1649,8 +1712,10 @@ finally:
         }
 
         // ---------- Right pane: stations get the whole rest of the panel ----------
+        // Hidden entirely in Compact — see docs/expand-compact-view-research.md.
         Item {
           id: rightPane
+          visible: !state.compactView
           anchors.left: columnDivider.right
           anchors.leftMargin: Style.space(8)
           anchors.right: parent.right
