@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ronnie.worldradio",
   "name": "World Radio",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "ronnie",
   "license": "MIT",
   "description": "Pick a country and a mood, tune in to a live radio station from there — inspired by radiooooo.com",

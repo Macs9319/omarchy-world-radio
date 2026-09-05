@@ -3,6 +3,32 @@
 All notable changes to World Radio are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-09-05
+
+### Added
+
+- **Compact/Expand toggle** — a small toggle in the hero row shrinks the
+  panel to just the now-playing hero, transport controls, and volume, or
+  restores today's full two-pane browser. The panel itself resizes, not
+  just the content inside it, and the choice persists for the session.
+  ([#11](https://github.com/Macs9319/omarchy-world-radio/issues/11))
+
+### Changed
+
+- **Icon-only transport and quick-filter buttons** — previous/pause/next,
+  Stop, Surprise, Trending, Recently added, and Near me are now small
+  icon-only buttons instead of full-width bordered text buttons, matching
+  Omarchy's own media-transport widget's style.
+  ([#12](https://github.com/Macs9319/omarchy-world-radio/issues/12))
+
+### Fixed
+
+- The left column's picker sections had grown past what fits on screen
+  with no way to scroll — the language filter (already shipped) was
+  entirely unreachable, cut off below the visible panel edge. The column
+  now scrolls, matching the shell's own audio panel.
+  ([#10](https://github.com/Macs9319/omarchy-world-radio/issues/10))
+
 ## [1.2.0] - 2026-09-05
 
 ### Added
