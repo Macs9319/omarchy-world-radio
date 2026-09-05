@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -1063,532 +1064,570 @@ finally:
       Item {
         anchors.fill: parent
 
-        Column {
+        // Scrolls independently of the station list on the right (which
+        // already scrolls via its own ListView) — the column has grown
+        // past what fits on screen as pickers were added over time, and
+        // without this, content past the visible edge (e.g. the language
+        // filter) is simply unreachable rather than clipped or scrollable.
+        // Matches the shell's own audio panel's shape (a PanelSlider inside
+        // a scrollable settings column): ScrollView with a Binding gating
+        // interactivity by actual overflow, plus a scrollbar that only
+        // appears when there's something to scroll, rather than an ad hoc
+        // Flickable.
+        ScrollView {
           id: leftColumn
           width: Style.space(320)
           anchors.left: parent.left
           anchors.top: parent.top
-          spacing: Style.space(12)
+          anchors.bottom: parent.bottom
+          clip: true
+          ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+          ScrollBar.vertical.policy: leftColumnContent.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
 
-          // ---------- Now playing hero ----------
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
-
-            Text {
-              id: heroIcon
-              text: "󰐹"
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.display
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-            }
-
-            Column {
-              id: heroLabels
-              anchors.left: heroIcon.right
-              anchors.leftMargin: Style.space(14)
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                text: "World Radio"
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-                width: parent.width
-              }
-
-              Text {
-                text: state.playing ? state.stationName : "Not playing"
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
-                width: parent.width
-              }
-
-              Text {
-                visible: root.buffering || root.nowPlayingTitle !== ""
-                text: root.buffering ? ("Buffering… " + root.bufferingPercent + "%") : root.nowPlayingTitle
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-                width: parent.width
-              }
-            }
-          }
-
-          // ---------- Tuning dial: previous / pause / next ----------
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Button {
-              width: (parent.width - parent.spacing * 2) / 3
-              text: "󰒮"
-              tooltipText: "Previous station"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              enabled: stationsModel.count > 0
-              opacity: enabled ? 1.0 : 0.4
-              onClicked: root.playRelativeStation(-1)
-            }
-
-            Button {
-              width: (parent.width - parent.spacing * 2) / 3
-              text: root.paused ? "Resume" : "Pause"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              enabled: state.playing
-              opacity: enabled ? 1.0 : 0.4
-              onClicked: root.togglePause()
-            }
-
-            Button {
-              width: (parent.width - parent.spacing * 2) / 3
-              text: "󰒭"
-              tooltipText: "Next station"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              enabled: stationsModel.count > 0
-              opacity: enabled ? 1.0 : 0.4
-              onClicked: root.playRelativeStation(1)
-            }
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "Stop"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              enabled: state.playing
-              opacity: enabled ? 1.0 : 0.4
-              onClicked: root.stopPlayback()
-            }
-
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "🎲 Surprise"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              onClicked: root.surpriseMe()
-            }
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "🔥 Trending"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              fontSize: Style.font.bodySmall
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              active: state.sortOrder === "votes"
-              onClicked: root.toggleSortOrder("votes")
-            }
-
-            Button {
-              width: (parent.width - parent.spacing) / 2
-              text: "🆕 Recently added"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              fontSize: Style.font.bodySmall
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY
-              bordered: true
-              active: state.sortOrder === "changetimestamp"
-              onClicked: root.toggleSortOrder("changetimestamp")
-            }
-          }
-
-          Button {
-            width: parent.width
-            text: "📍 Near me"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-            horizontalPadding: Style.spacing.controlPaddingX
-            verticalPadding: Style.spacing.controlPaddingY
-            bordered: true
-            active: root.geoActive
-            onClicked: root.findNearMe()
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-            visible: root.geoActive
-
-            Text {
-              width: parent.width - geoClearButton.width - parent.spacing
-              text: root.geoLabel
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              elide: Text.ElideRight
-            }
-
-            Text {
-              id: geoClearButton
-              text: "✕"
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.bodySmall
-
-              MouseArea {
-                anchors.fill: parent
-                anchors.margins: -Style.space(6)
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.clearGeo()
-              }
-            }
-          }
-
-          Text {
-            width: parent.width
-            visible: root.loadingGeo
-            text: "Finding your location…"
-            color: root.bar.foreground
-            opacity: 0.6
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            width: parent.width
-            visible: root.geoError !== ""
-            text: root.geoError
-            color: root.bar.foreground
-            wrapMode: Text.WordWrap
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          PanelSlider {
-            width: parent.width
-            bar: root.bar
-            minimum: 0
-            maximum: 100
-            step: 1
-            integer: true
-            value: state.volume
-            onMoved: function(v) {
-              state.volume = v
-              if (ipcSocket.connected) {
-                ipcSocket.write(JSON.stringify({ command: ["set_property", "volume", v] }) + "\n")
-                ipcSocket.flush()
-              }
-            }
-          }
-
-          PanelSeparator { foreground: root.bar.foreground }
-          PanelSectionHeader { text: "SEARCH BY NAME"; foreground: root.bar.foreground }
-
-          TextField {
-            id: nameField
-            width: parent.width
-            placeholderText: "Station name…"
-            foreground: root.bar.foreground
-            onTextChanged: {
-              root.nameQuery = text
-              nameSearchTimer.restart()
-            }
-          }
-
-          Text {
-            width: parent.width
-            visible: root.nameQuery.trim() !== ""
-            text: state.countryCode !== ""
-              ? "Matching “" + root.nameQuery.trim() + "” in " + state.countryName
-              : "Matching “" + root.nameQuery.trim() + "” worldwide"
-            color: Qt.darker(root.bar.foreground, 1.4)
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
-
-          PanelSeparator { foreground: root.bar.foreground }
-          PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
-
-          Flow {
-            width: parent.width
-            spacing: Style.space(6)
-            Repeater {
-              model: root.curatedCountries
-              delegate: Button {
-                required property var modelData
-                text: root.flagFor(modelData.code) + " " + modelData.name
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                fontSize: Style.font.bodySmall
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.space(4)
-                bordered: true
-                active: state.countryCode === modelData.code
-                onClicked: root.selectCountry(modelData.code, modelData.name)
-              }
-            }
-          }
-
-          TextField {
-            id: countryField
-            width: parent.width
-            placeholderText: "Search any country…"
-            foreground: root.bar.foreground
-            onTextChanged: {
-              root.countryQuery = text
-              root.ensureCountriesLoaded()
-              root.updateCountryMatches()
-            }
-          }
-
-          Text {
-            width: parent.width
-            visible: root.countryQuery.trim() !== "" && root.loadingCountries
-            text: "Searching countries…"
-            color: root.bar.foreground
-            opacity: 0.6
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            width: parent.width
-            visible: root.countriesError !== ""
-            text: root.countriesError
-            color: root.bar.foreground
-            wrapMode: Text.WordWrap
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            width: parent.width
-            visible: !root.loadingCountries && root.countriesError === "" && root.countryQuery.trim() !== "" && root.allCountries.length > 0 && root.countryMatches.length === 0
-            text: "No countries match “" + root.countryQuery.trim() + "”."
-            color: root.bar.foreground
-            opacity: 0.6
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
+          // The audio panel's own PanelSliders don't guard against this,
+          // but its consequence turned out worse than a cut-short drag:
+          // PanelSlider's `dragging` flag has no onCanceled, only
+          // onReleased, so a grab stolen mid-drag by this ScrollView's
+          // Flickable leaves `dragging` stuck true permanently — its knob
+          // then never reflects `state.volume` again (onValueChanged only
+          // updates the visible position `if (!dragging)`), not just a
+          // one-off interrupted gesture. Unlike PanelSlider.qml itself
+          // (a shared qs.Ui component, not this plugin's to change),
+          // suppressing this container's interactivity for the duration
+          // of a drag is entirely within this file, so there's no reason
+          // to accept the same latent risk here once it's understood.
+          Binding {
+            target: leftColumn.contentItem
+            property: "interactive"
+            value: leftColumnContent.implicitHeight > leftColumn.height && !volumeSlider.dragging
           }
 
           Column {
-            width: parent.width
-            spacing: Style.space(2)
-            visible: root.countryMatches.length > 0
-            Repeater {
-              model: root.countryMatches
-              delegate: Button {
-                required property var modelData
-                width: parent.width
-                leftAlign: true
-                text: root.flagFor(modelData.code) + "  " + modelData.name
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.space(4)
-                onClicked: {
-                  // Deferred: selectCountry() clears root.countryMatches,
-                  // which is this Repeater's own model — doing that
-                  // synchronously from inside this delegate's own click
-                  // handler destroys the Button mid-handler (the first-
-                  // party notifications service hits the same class of
-                  // bug and documents it as Qt.callLater avoiding a
-                  // QV4::Object::insertMember crash when a Repeater is
-                  // mid-incubation while its model is mutated). Without
-                  // this, the handler aborted after clearing the search
-                  // text and never reached selectCountry() at all, so
-                  // picking a search result silently failed to load its
-                  // stations — confirmed via a live "ReferenceError: root
-                  // is not defined" at this exact line in journalctl.
-                  var pickedCode = modelData.code
-                  var pickedName = modelData.name
-                  Qt.callLater(function() {
-                    countryField.text = ""
-                    root.selectCountry(pickedCode, pickedName)
-                  })
+            id: leftColumnContent
+            width: leftColumn.availableWidth
+            spacing: Style.space(12)
+
+            // ---------- Now playing hero ----------
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
+
+              Text {
+                id: heroIcon
+                text: "󰐹"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.display
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Column {
+                id: heroLabels
+                anchors.left: heroIcon.right
+                anchors.leftMargin: Style.space(14)
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Text {
+                  text: "World Radio"
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: true
+                  elide: Text.ElideRight
+                  width: parent.width
+                }
+
+                Text {
+                  text: state.playing ? state.stationName : "Not playing"
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                  width: parent.width
+                }
+
+                Text {
+                  visible: root.buffering || root.nowPlayingTitle !== ""
+                  text: root.buffering ? ("Buffering… " + root.bufferingPercent + "%") : root.nowPlayingTitle
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  width: parent.width
                 }
               }
             }
-          }
 
-          PanelSeparator { foreground: root.bar.foreground }
-          PanelSectionHeader { text: "MOOD (OPTIONAL)"; foreground: root.bar.foreground }
+            // ---------- Tuning dial: previous / pause / next ----------
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
 
-          Flow {
-            width: parent.width
-            spacing: Style.space(6)
-            Repeater {
-              model: root.curatedTags
-              delegate: Button {
-                required property var modelData
-                text: modelData
+              Button {
+                width: (parent.width - parent.spacing * 2) / 3
+                text: "󰒮"
+                tooltipText: "Previous station"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                bordered: true
+                enabled: stationsModel.count > 0
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: root.playRelativeStation(-1)
+              }
+
+              Button {
+                width: (parent.width - parent.spacing * 2) / 3
+                text: root.paused ? "Resume" : "Pause"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                bordered: true
+                enabled: state.playing
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: root.togglePause()
+              }
+
+              Button {
+                width: (parent.width - parent.spacing * 2) / 3
+                text: "󰒭"
+                tooltipText: "Next station"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                bordered: true
+                enabled: stationsModel.count > 0
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: root.playRelativeStation(1)
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                width: (parent.width - parent.spacing) / 2
+                text: "Stop"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                bordered: true
+                enabled: state.playing
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: root.stopPlayback()
+              }
+
+              Button {
+                width: (parent.width - parent.spacing) / 2
+                text: "🎲 Surprise"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                bordered: true
+                onClicked: root.surpriseMe()
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                width: (parent.width - parent.spacing) / 2
+                text: "🔥 Trending"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 fontSize: Style.font.bodySmall
                 horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.space(4)
+                verticalPadding: Style.spacing.controlPaddingY
                 bordered: true
-                active: state.tag === modelData
-                onClicked: root.toggleTag(modelData)
+                active: state.sortOrder === "votes"
+                onClicked: root.toggleSortOrder("votes")
               }
-            }
-          }
 
-          PanelSeparator { foreground: root.bar.foreground }
-          PanelSectionHeader { text: "DECADE (OPTIONAL)"; foreground: root.bar.foreground }
-
-          Flow {
-            width: parent.width
-            spacing: Style.space(6)
-            Repeater {
-              model: root.curatedDecades
-              delegate: Button {
-                required property var modelData
-                text: modelData
+              Button {
+                width: (parent.width - parent.spacing) / 2
+                text: "🆕 Recently added"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 fontSize: Style.font.bodySmall
                 horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.space(4)
+                verticalPadding: Style.spacing.controlPaddingY
                 bordered: true
-                active: state.decade === modelData
-                onClicked: root.toggleDecade(modelData)
+                active: state.sortOrder === "changetimestamp"
+                onClicked: root.toggleSortOrder("changetimestamp")
               }
             }
-          }
 
-          PanelSeparator { foreground: root.bar.foreground }
-          PanelSectionHeader { text: "LANGUAGE (OPTIONAL)"; foreground: root.bar.foreground }
+            Button {
+              width: parent.width
+              text: "📍 Near me"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY
+              bordered: true
+              active: root.geoActive
+              onClicked: root.findNearMe()
+            }
 
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-            visible: state.languageCode !== ""
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+              visible: root.geoActive
+
+              Text {
+                width: parent.width - geoClearButton.width - parent.spacing
+                text: root.geoLabel
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+              }
+
+              Text {
+                id: geoClearButton
+                text: "✕"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.bodySmall
+
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(6)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.clearGeo()
+                }
+              }
+            }
 
             Text {
-              width: parent.width - languageClearButton.width - parent.spacing
-              text: state.languageName
+              width: parent.width
+              visible: root.loadingGeo
+              text: "Finding your location…"
               color: root.bar.foreground
+              opacity: 0.6
               font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              elide: Text.ElideRight
+              font.pixelSize: Style.font.caption
             }
 
             Text {
-              id: languageClearButton
-              text: "✕"
+              width: parent.width
+              visible: root.geoError !== ""
+              text: root.geoError
+              color: root.bar.foreground
+              wrapMode: Text.WordWrap
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            PanelSlider {
+              id: volumeSlider
+              width: parent.width
+              bar: root.bar
+              minimum: 0
+              maximum: 100
+              step: 1
+              integer: true
+              value: state.volume
+              onMoved: function(v) {
+                state.volume = v
+                if (ipcSocket.connected) {
+                  ipcSocket.write(JSON.stringify({ command: ["set_property", "volume", v] }) + "\n")
+                  ipcSocket.flush()
+                }
+              }
+            }
+
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "SEARCH BY NAME"; foreground: root.bar.foreground }
+
+            TextField {
+              id: nameField
+              width: parent.width
+              placeholderText: "Station name…"
+              foreground: root.bar.foreground
+              onTextChanged: {
+                root.nameQuery = text
+                nameSearchTimer.restart()
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.nameQuery.trim() !== ""
+              text: state.countryCode !== ""
+                ? "Matching “" + root.nameQuery.trim() + "” in " + state.countryName
+                : "Matching “" + root.nameQuery.trim() + "” worldwide"
               color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.bodySmall
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
 
-              MouseArea {
-                anchors.fill: parent
-                anchors.margins: -Style.space(6)
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.clearLanguage()
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+              Repeater {
+                model: root.curatedCountries
+                delegate: Button {
+                  required property var modelData
+                  text: root.flagFor(modelData.code) + " " + modelData.name
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  fontSize: Style.font.bodySmall
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.space(4)
+                  bordered: true
+                  active: state.countryCode === modelData.code
+                  onClicked: root.selectCountry(modelData.code, modelData.name)
+                }
               }
             }
-          }
 
-          TextField {
-            id: languageField
-            width: parent.width
-            placeholderText: "Search any language…"
-            foreground: root.bar.foreground
-            onTextChanged: {
-              root.languageQuery = text
-              root.ensureLanguagesLoaded()
-              root.updateLanguageMatches()
+            TextField {
+              id: countryField
+              width: parent.width
+              placeholderText: "Search any country…"
+              foreground: root.bar.foreground
+              onTextChanged: {
+                root.countryQuery = text
+                root.ensureCountriesLoaded()
+                root.updateCountryMatches()
+              }
             }
-          }
 
-          Text {
-            width: parent.width
-            visible: root.languageQuery.trim() !== "" && root.loadingLanguages
-            text: "Searching languages…"
-            color: root.bar.foreground
-            opacity: 0.6
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
+            Text {
+              width: parent.width
+              visible: root.countryQuery.trim() !== "" && root.loadingCountries
+              text: "Searching countries…"
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
 
-          Text {
-            width: parent.width
-            visible: root.languagesError !== ""
-            text: root.languagesError
-            color: root.bar.foreground
-            wrapMode: Text.WordWrap
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
+            Text {
+              width: parent.width
+              visible: root.countriesError !== ""
+              text: root.countriesError
+              color: root.bar.foreground
+              wrapMode: Text.WordWrap
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
 
-          Text {
-            width: parent.width
-            visible: !root.loadingLanguages && root.languagesError === "" && root.languageQuery.trim() !== "" && root.allLanguages.length > 0 && root.languageMatches.length === 0
-            text: "No languages match “" + root.languageQuery.trim() + "”."
-            color: root.bar.foreground
-            opacity: 0.6
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
+            Text {
+              width: parent.width
+              visible: !root.loadingCountries && root.countriesError === "" && root.countryQuery.trim() !== "" && root.allCountries.length > 0 && root.countryMatches.length === 0
+              text: "No countries match “" + root.countryQuery.trim() + "”."
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
 
-          Column {
-            width: parent.width
-            spacing: Style.space(2)
-            visible: root.languageMatches.length > 0
-            Repeater {
-              model: root.languageMatches
-              delegate: Button {
-                required property var modelData
-                width: parent.width
-                leftAlign: true
-                text: modelData.name
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.space(4)
-                onClicked: {
-                  // Same deferred-selection pattern as the country search
-                  // results above (selectLanguage() clears this Repeater's
-                  // own model mid-click-handler otherwise).
-                  var pickedCode = modelData.code
-                  var pickedName = modelData.name
-                  Qt.callLater(function() {
-                    languageField.text = ""
-                    root.selectLanguage(pickedCode, pickedName)
-                  })
+            Column {
+              width: parent.width
+              spacing: Style.space(2)
+              visible: root.countryMatches.length > 0
+              Repeater {
+                model: root.countryMatches
+                delegate: Button {
+                  required property var modelData
+                  width: parent.width
+                  leftAlign: true
+                  text: root.flagFor(modelData.code) + "  " + modelData.name
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.space(4)
+                  onClicked: {
+                    // Deferred: selectCountry() clears root.countryMatches,
+                    // which is this Repeater's own model — doing that
+                    // synchronously from inside this delegate's own click
+                    // handler destroys the Button mid-handler (the first-
+                    // party notifications service hits the same class of
+                    // bug and documents it as Qt.callLater avoiding a
+                    // QV4::Object::insertMember crash when a Repeater is
+                    // mid-incubation while its model is mutated). Without
+                    // this, the handler aborted after clearing the search
+                    // text and never reached selectCountry() at all, so
+                    // picking a search result silently failed to load its
+                    // stations — confirmed via a live "ReferenceError: root
+                    // is not defined" at this exact line in journalctl.
+                    var pickedCode = modelData.code
+                    var pickedName = modelData.name
+                    Qt.callLater(function() {
+                      countryField.text = ""
+                      root.selectCountry(pickedCode, pickedName)
+                    })
+                  }
+                }
+              }
+            }
+
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "MOOD (OPTIONAL)"; foreground: root.bar.foreground }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+              Repeater {
+                model: root.curatedTags
+                delegate: Button {
+                  required property var modelData
+                  text: modelData
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  fontSize: Style.font.bodySmall
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.space(4)
+                  bordered: true
+                  active: state.tag === modelData
+                  onClicked: root.toggleTag(modelData)
+                }
+              }
+            }
+
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "DECADE (OPTIONAL)"; foreground: root.bar.foreground }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(6)
+              Repeater {
+                model: root.curatedDecades
+                delegate: Button {
+                  required property var modelData
+                  text: modelData
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  fontSize: Style.font.bodySmall
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.space(4)
+                  bordered: true
+                  active: state.decade === modelData
+                  onClicked: root.toggleDecade(modelData)
+                }
+              }
+            }
+
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "LANGUAGE (OPTIONAL)"; foreground: root.bar.foreground }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(6)
+              visible: state.languageCode !== ""
+
+              Text {
+                width: parent.width - languageClearButton.width - parent.spacing
+                text: state.languageName
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+              }
+
+              Text {
+                id: languageClearButton
+                text: "✕"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.bodySmall
+
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(6)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.clearLanguage()
+                }
+              }
+            }
+
+            TextField {
+              id: languageField
+              width: parent.width
+              placeholderText: "Search any language…"
+              foreground: root.bar.foreground
+              onTextChanged: {
+                root.languageQuery = text
+                root.ensureLanguagesLoaded()
+                root.updateLanguageMatches()
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.languageQuery.trim() !== "" && root.loadingLanguages
+              text: "Searching languages…"
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width
+              visible: root.languagesError !== ""
+              text: root.languagesError
+              color: root.bar.foreground
+              wrapMode: Text.WordWrap
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width
+              visible: !root.loadingLanguages && root.languagesError === "" && root.languageQuery.trim() !== "" && root.allLanguages.length > 0 && root.languageMatches.length === 0
+              text: "No languages match “" + root.languageQuery.trim() + "”."
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.space(2)
+              visible: root.languageMatches.length > 0
+              Repeater {
+                model: root.languageMatches
+                delegate: Button {
+                  required property var modelData
+                  width: parent.width
+                  leftAlign: true
+                  text: modelData.name
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.space(4)
+                  onClicked: {
+                    // Same deferred-selection pattern as the country search
+                    // results above (selectLanguage() clears this Repeater's
+                    // own model mid-click-handler otherwise).
+                    var pickedCode = modelData.code
+                    var pickedName = modelData.name
+                    Qt.callLater(function() {
+                      languageField.text = ""
+                      root.selectLanguage(pickedCode, pickedName)
+                    })
+                  }
                 }
               }
             }
