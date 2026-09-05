@@ -1203,7 +1203,7 @@ finally:
               }
             }
 
-            // ---------- Tuning dial: previous / pause / next ----------
+            // ---------- Tuning dial: previous / pause / next / stop / surprise ----------
             // Icon-only, content-sized, borderless-at-rest — matches
             // Omarchy's own media-transport widget
             // (plugins/services/media/BarWidget.qml), reusing the identical
@@ -1211,7 +1211,10 @@ finally:
             // in this file until now) and its "primary action is slightly
             // larger" treatment for Pause/Resume. Deliberately not full-width
             // like every other row in this column — see
-            // docs/compact-transport-buttons-research.md.
+            // docs/compact-transport-buttons-research.md. Trending/Recently-
+            // added/Near-me sit on this same line too (each individually
+            // gated by visible: !state.compactView below) rather than in
+            // their own row, so nothing wraps to a second line in Expand.
             Row {
               anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(6)
@@ -1251,11 +1254,6 @@ finally:
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.playRelativeStation(1)
               }
-            }
-
-            Row {
-              anchors.horizontalCenter: parent.horizontalCenter
-              spacing: Style.space(6)
 
               Button {
                 iconText: "⏹"
@@ -1278,9 +1276,50 @@ finally:
                 verticalPadding: Style.spacing.controlPaddingY
                 onClicked: root.surpriseMe()
               }
+
+              // Hidden individually (not as a group) so these three stay on
+              // the same line as the always-visible buttons above in Expand,
+              // while still dropping out of the row's layout and tab order
+              // in Compact — see docs/expand-compact-view-research.md and
+              // issue #11.
+              Button {
+                visible: !state.compactView
+                iconText: "🔥"
+                tooltipText: "Trending"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                active: state.sortOrder === "votes"
+                onClicked: root.toggleSortOrder("votes")
+              }
+
+              Button {
+                visible: !state.compactView
+                iconText: "🆕"
+                tooltipText: "Recently added"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                active: state.sortOrder === "changetimestamp"
+                onClicked: root.toggleSortOrder("changetimestamp")
+              }
+
+              Button {
+                visible: !state.compactView
+                iconText: "📍"
+                tooltipText: "Near me"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                active: root.geoActive
+                onClicked: root.findNearMe()
+              }
             }
 
-            // ---------- Expand-only: sort, geo ----------
+            // ---------- Expand-only: geo detail ----------
             // Compact hides this whole group (visible: false, not just
             // opacity/height, so it also drops out of tab order — see
             // docs/expand-compact-view-research.md and issue #11). Nothing
@@ -1290,44 +1329,6 @@ finally:
               width: parent.width
               spacing: Style.space(12)
               visible: !state.compactView
-
-              Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Style.space(6)
-
-                Button {
-                  iconText: "🔥"
-                  tooltipText: "Trending"
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.spacing.controlPaddingY
-                  active: state.sortOrder === "votes"
-                  onClicked: root.toggleSortOrder("votes")
-                }
-
-                Button {
-                  iconText: "🆕"
-                  tooltipText: "Recently added"
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.spacing.controlPaddingY
-                  active: state.sortOrder === "changetimestamp"
-                  onClicked: root.toggleSortOrder("changetimestamp")
-                }
-
-                Button {
-                  iconText: "📍"
-                  tooltipText: "Near me"
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.spacing.controlPaddingY
-                  active: root.geoActive
-                  onClicked: root.findNearMe()
-                }
-              }
 
               Row {
                 width: parent.width
