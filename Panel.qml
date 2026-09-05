@@ -1233,8 +1233,7 @@ finally:
                 tooltipText: root.paused ? "Resume playback" : "Pause playback"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
-                iconSize: Style.font.iconLarge
-                horizontalPadding: Style.spacing.panelGap
+                horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY
                 enabled: state.playing
                 opacity: enabled ? 1.0 : 0.4
@@ -1255,30 +1254,28 @@ finally:
             }
 
             Row {
-              width: parent.width
+              anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(6)
 
               Button {
-                width: (parent.width - parent.spacing) / 2
-                text: "Stop"
+                iconText: "⏹"
+                tooltipText: "Stop"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
                 enabled: state.playing
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.stopPlayback()
               }
 
               Button {
-                width: (parent.width - parent.spacing) / 2
-                text: "🎲 Surprise"
+                iconText: "🎲"
+                tooltipText: "Surprise me"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
                 onClicked: root.surpriseMe()
               }
             }
@@ -1295,46 +1292,41 @@ finally:
               visible: !state.compactView
 
               Row {
-                width: parent.width
+                anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(6)
 
                 Button {
-                  width: (parent.width - parent.spacing) / 2
-                  text: "🔥 Trending"
+                  iconText: "🔥"
+                  tooltipText: "Trending"
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
-                  fontSize: Style.font.bodySmall
                   horizontalPadding: Style.spacing.controlPaddingX
                   verticalPadding: Style.spacing.controlPaddingY
-                  bordered: true
                   active: state.sortOrder === "votes"
                   onClicked: root.toggleSortOrder("votes")
                 }
 
                 Button {
-                  width: (parent.width - parent.spacing) / 2
-                  text: "🆕 Recently added"
+                  iconText: "🆕"
+                  tooltipText: "Recently added"
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
-                  fontSize: Style.font.bodySmall
                   horizontalPadding: Style.spacing.controlPaddingX
                   verticalPadding: Style.spacing.controlPaddingY
-                  bordered: true
                   active: state.sortOrder === "changetimestamp"
                   onClicked: root.toggleSortOrder("changetimestamp")
                 }
-              }
 
-              Button {
-                width: parent.width
-                text: "📍 Near me"
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
-                active: root.geoActive
-                onClicked: root.findNearMe()
+                Button {
+                  iconText: "📍"
+                  tooltipText: "Near me"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.spacing.controlPaddingY
+                  active: root.geoActive
+                  onClicked: root.findNearMe()
+                }
               }
 
               Row {
