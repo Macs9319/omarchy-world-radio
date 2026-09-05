@@ -1162,46 +1162,50 @@ finally:
             }
 
             // ---------- Tuning dial: previous / pause / next ----------
+            // Icon-only, content-sized, borderless-at-rest — matches
+            // Omarchy's own media-transport widget
+            // (plugins/services/media/BarWidget.qml), reusing the identical
+            // prev/next glyphs plus its play/pause glyphs (unused elsewhere
+            // in this file until now) and its "primary action is slightly
+            // larger" treatment for Pause/Resume. Deliberately not full-width
+            // like every other row in this column — see
+            // docs/compact-transport-buttons-research.md.
             Row {
-              width: parent.width
+              anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(6)
 
               Button {
-                width: (parent.width - parent.spacing * 2) / 3
-                text: "󰒮"
+                iconText: "󰒮"
                 tooltipText: "Previous station"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
                 enabled: stationsModel.count > 0
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.playRelativeStation(-1)
               }
 
               Button {
-                width: (parent.width - parent.spacing * 2) / 3
-                text: root.paused ? "Resume" : "Pause"
+                iconText: root.paused ? "󰐊" : "󰏤"
+                tooltipText: root.paused ? "Resume playback" : "Pause playback"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
-                horizontalPadding: Style.spacing.controlPaddingX
+                iconSize: Style.font.iconLarge
+                horizontalPadding: Style.spacing.panelGap
                 verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
                 enabled: state.playing
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.togglePause()
               }
 
               Button {
-                width: (parent.width - parent.spacing * 2) / 3
-                text: "󰒭"
+                iconText: "󰒭"
                 tooltipText: "Next station"
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY
-                bordered: true
                 enabled: stationsModel.count > 0
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.playRelativeStation(1)
