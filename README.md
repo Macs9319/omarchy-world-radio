@@ -2,11 +2,12 @@
 
 [![CI](https://github.com/Macs9319/omarchy-world-radio/actions/workflows/ci.yml/badge.svg)](https://github.com/Macs9319/omarchy-world-radio/actions/workflows/ci.yml)
 
-An [Omarchy](https://omarchy.org/) shell plugin: pick a country and (optionally) a mood
-or decade, then listen to a live internet radio station from there — a lightweight nod
-to [radiooooo.com](https://app.radiooooo.com/)'s "spin the globe" idea, built entirely on
-the open [Radio Browser](https://www.radio-browser.info/) directory rather than any
-proprietary catalog.
+An [Omarchy](https://omarchy.org/) shell plugin: pick a country, a language, or just find
+something near you — optionally narrow by mood or decade — and listen to a live internet
+radio station from there. A lightweight nod to [radiooooo.com](https://app.radiooooo.com/)'s
+"spin the globe" idea, built entirely on the open
+[Radio Browser](https://www.radio-browser.info/) directory rather than any proprietary
+catalog.
 
 ![World Radio panel](preview.png)
 
@@ -15,21 +16,35 @@ proprietary catalog.
 - **Country picker** — a curated grid of flags plus a live search over every country in
   the Radio Browser directory.
 - **Search by name** — a free-text box that filters stations by name, on its own
-  (worldwide) or AND-ed with the selected country, mood and decade. Debounced ~350ms.
+  (worldwide) or AND-ed with the selected country, mood, decade and language. Debounced
+  ~350ms.
 - **Mood and Decade filters** — optional tag chips (pop, rock, jazz, classical, 80s, 90s,
   2000s, ...) that narrow the station list; combine both at once.
+- **Language filter** — a free-text search over every language Radio Browser tracks,
+  composing with every other filter.
+- **Near me** — an IP-based geolocation filter finds stations within 50km of your
+  approximate location, no manual location entry required.
+- **Trending and Recently added** — two toggleable sort orders that reorder the current
+  list by current popularity or by recency, instead of all-time click count.
 - **Tuning dial** — Previous/Next buttons step through the current station list; a
   "🎲 Surprise" button spins a random country and station.
 - **Favorites** — star a station to pin it to the top of its list. Favorites are stored
   in `~/.local/state/omarchy/world-radio-favorites.json` and survive shell restarts.
+- **Vote** — upvote a station in the public Radio Browser directory directly from its
+  row, independently of favoriting it locally.
+- **Station favicon** — each station in the list shows its own logo, when the directory
+  has one.
 - **Live playback controls** — Play/Pause, Stop, and a volume slider, driven over mpv's
   JSON IPC socket (via Quickshell's native `Socket` type — no extra CLI dependency).
-- **Now playing** — shows the live ICY stream title when the station sends one.
+- **Loudness normalization** — mpv's bundled `loudnorm` filter evens out the wide
+  loudness swings between stations.
+- **Now playing** — shows the live ICY stream title when the station sends one, and a
+  real "Buffering… NN%" state during the connection gap or a later rebuffer.
 - **Hardware media keys / MPRIS** — mpv's system-wide config already auto-loads the
   `mpv-mpris` script, so `XF86AudioPlay/Pause/Stop` and any MPRIS-aware widget control
   the radio too, with no extra flags needed here.
-- Two-pane layout: pickers on the left, the station list gets its own full-height pane
-  on the right.
+- Two-pane layout: pickers scroll independently on the left, the station list gets its
+  own full-height pane on the right.
 
 ## Requirements
 
@@ -73,8 +88,9 @@ Click the radio icon in the bar (or bind a key, e.g. in
 o.bind("SUPER + R", "World Radio", "omarchy-shell shell toggle ronnie.worldradio")
 ```
 
-Pick a country, optionally a mood and/or decade, then click a station to play it.
-Right-click the bar icon to stop, middle-click to pause/resume.
+Pick a country, search by name, pick a language, or hit Near me — optionally add a mood
+and/or decade, or reorder the list by Trending/Recently added — then click a station to
+play it. Right-click the bar icon to stop, middle-click to pause/resume.
 
 ## Settings
 
