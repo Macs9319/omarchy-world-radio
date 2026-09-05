@@ -699,6 +699,13 @@ finally:
           }
         } catch (e) { }
         if (ok) {
+          // A stale country selection would otherwise AND with the new
+          // location almost certainly nonsensically (e.g. a Singapore
+          // filter combined with a US location) — the same silent
+          // zero-results failure mode selectCountry() already guards
+          // against in the opposite direction.
+          state.countryCode = ""
+          state.countryName = ""
           root.geoActive = true
           root.geoLat = lat
           root.geoLong = long
