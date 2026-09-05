@@ -3,6 +3,43 @@
 All notable changes to World Radio are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-09-05
+
+### Added
+
+- **Station favicon** — the station list now shows each station's own
+  favicon next to its name, using the same data Radio Browser already
+  returns. ([#3](https://github.com/Macs9319/omarchy-world-radio/issues/3))
+- **Loudness normalization** — mpv's bundled `loudnorm` filter is now
+  applied to every stream, evening out the wide loudness swings between
+  stations. ([#4](https://github.com/Macs9319/omarchy-world-radio/issues/4))
+- **Language filter** — a free-text language search, mirroring the
+  existing country search, composes with country/mood/decade/name.
+  ([#5](https://github.com/Macs9319/omarchy-world-radio/issues/5))
+- **Trending / Recently added** — two toggleable sort orders next to
+  Surprise, reordering the current list by votes or by recency instead
+  of all-time click count.
+  ([#6](https://github.com/Macs9319/omarchy-world-radio/issues/6))
+- **Near me** — an IP-based geolocation filter finds stations within
+  50km of your approximate location, composing with other filters.
+  ([#7](https://github.com/Macs9319/omarchy-world-radio/issues/7))
+- **Buffering indicator** — the now-playing area shows a real
+  "Buffering… NN%" state during the connection gap after clicking a
+  station, or during a later rebuffer, instead of leaving that window
+  blank. ([#8](https://github.com/Macs9319/omarchy-world-radio/issues/8))
+- **Vote button** — upvote a station in the public Radio Browser
+  directory directly from its row.
+  ([#9](https://github.com/Macs9319/omarchy-world-radio/issues/9))
+- A GitHub Actions CI workflow (manifest/QML sanity checks) and a CI
+  status badge on the README.
+
+### Fixed
+
+- The now-playing title and Pause/Resume label synced via a 2-second
+  poll; both now update the instant mpv itself reports a change, via
+  mpv's `observe_property` mechanism instead of polling.
+  ([#2](https://github.com/Macs9319/omarchy-world-radio/issues/2))
+
 ## [1.1.0] - 2026-08-30
 
 ### Added
