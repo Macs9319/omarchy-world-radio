@@ -31,9 +31,11 @@ Panel {
 
   // IDs for mpv's observe_property, referenced in both handleMpvMessage and
   // the IPC connect handler — kept as named constants so a future observed
-  // property can't silently collide with one of these two.
+  // property can't silently collide with one of these.
   readonly property int metadataObserveId: 1
   readonly property int pauseObserveId: 2
+  readonly property int pausedForCacheObserveId: 3
+  readonly property int cacheBufferingStateObserveId: 4
 
   readonly property var curatedCountries: [
     { code: "US", name: "United States" },
@@ -76,6 +78,8 @@ Panel {
 
   property bool paused: false
   property string nowPlayingTitle: ""
+  property bool buffering: false
+  property int bufferingPercent: 0
   property bool pendingSurprise: false
 
   // True for the one mpvProc.exited that fires because playStation() killed
@@ -520,14 +524,24 @@ finally:
     languagesProc.running = true
   }
 
+  // Shared by playStation(), stopPlayback(), and mpvProc.onExited's
+  // "really stopped" cleanup: every piece of mpv-observed playback display
+  // state, reset together so a future observed property can't be added to
+  // one reset site and forgotten in another.
+  function resetPlaybackDisplay() {
+    root.paused = false
+    root.nowPlayingTitle = ""
+    root.buffering = false
+    root.bufferingPercent = 0
+  }
+
   function playStation(uuid, name, url) {
     if (!/^https?:\/\//i.test(url)) return
     state.stationUuid = uuid
     state.stationName = name
     state.stationUrl = url
     state.playing = true
-    root.paused = false
-    root.nowPlayingTitle = ""
+    root.resetPlaybackDisplay()
 
     if (mpvProc.running) root.switchingStation = true
     ipcSocket.connected = false
@@ -574,8 +588,7 @@ finally:
     mpvProc.running = false
     ipcSocket.connected = false
     state.playing = false
-    root.paused = false
-    root.nowPlayingTitle = ""
+    root.resetPlaybackDisplay()
   }
 
   function handleMpvMessage(line) {
@@ -598,6 +611,13 @@ finally:
       // Keeps the Pause/Resume label correct even when playback was toggled
       // from a hardware media key or another MPRIS controller, not this panel.
       root.paused = msg.data
+    } else if (msg.id === root.pausedForCacheObserveId && typeof msg.data === "boolean") {
+      root.buffering = msg.data
+    } else if (msg.id === root.cacheBufferingStateObserveId && typeof msg.data === "number") {
+      // Documented as 0-100, but clamped the same way other externally
+      // sourced numbers in this file already are (e.g. bitrate), rather
+      // than trusting it unconditionally.
+      root.bufferingPercent = Math.max(0, Math.min(100, msg.data))
     }
   }
 
@@ -831,8 +851,7 @@ finally:
       ipcRetryTimer.stop()
       ipcSocket.connected = false
       state.playing = false
-      root.paused = false
-      root.nowPlayingTitle = ""
+      root.resetPlaybackDisplay()
     }
   }
 
@@ -874,6 +893,11 @@ finally:
         // instantly in sync, with no separate get_property call needed.
         write(JSON.stringify({ command: ["observe_property", root.metadataObserveId, "metadata"] }) + "\n")
         write(JSON.stringify({ command: ["observe_property", root.pauseObserveId, "pause"] }) + "\n")
+        // Surfaces real "Buffering…" feedback during the connection gap
+        // (or a later rebuffer) instead of leaving that window blank —
+        // confirmed live against a real mpv instance and stream.
+        write(JSON.stringify({ command: ["observe_property", root.pausedForCacheObserveId, "paused-for-cache"] }) + "\n")
+        write(JSON.stringify({ command: ["observe_property", root.cacheBufferingStateObserveId, "cache-buffering-state"] }) + "\n")
         flush()
       }
     }
@@ -889,7 +913,9 @@ finally:
     text: "󰐹"
     active: state.playing
     tooltipText: state.playing
-      ? ("Playing: " + state.stationName + (root.nowPlayingTitle ? " — " + root.nowPlayingTitle : ""))
+      ? ("Playing: " + state.stationName + (root.buffering
+          ? (" — Buffering… " + root.bufferingPercent + "%")
+          : (root.nowPlayingTitle ? " — " + root.nowPlayingTitle : "")))
       : "World Radio"
     onPressed: function(b) {
       if (b === Qt.RightButton) root.stopPlayback()
@@ -976,8 +1002,8 @@ finally:
               }
 
               Text {
-                visible: root.nowPlayingTitle !== ""
-                text: root.nowPlayingTitle
+                visible: root.buffering || root.nowPlayingTitle !== ""
+                text: root.buffering ? ("Buffering… " + root.bufferingPercent + "%") : root.nowPlayingTitle
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
