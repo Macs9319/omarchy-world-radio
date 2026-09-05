@@ -86,6 +86,12 @@ Panel {
   // station's socket reconnect, even though it's actively playing.
   property bool switchingStation: false
 
+  // Same guard shape as switchingStation above, for stationsProc: set
+  // when a running fetch is killed for a restart or an intentional clear,
+  // consumed by onExited so a killed fetch's belated result can't clobber
+  // state a newer fetch (or the clear) already set.
+  property bool stationsSwitching: false
+
   property bool loadingCountries: false
   property string countriesError: ""
   property var allCountries: []
@@ -97,6 +103,21 @@ Panel {
   property var allLanguages: []
   property string languageQuery: ""
   property var languageMatches: []
+
+  // "Near me" geo filter. Deliberately transient (not in `state`), unlike
+  // a country or language choice: an IP-derived location can go stale
+  // (the machine moves, a VPN changes), so it's looked up fresh each time
+  // it's requested rather than carried over from a previous session.
+  readonly property int geoDistanceMeters: 50000
+  property bool geoActive: false
+  property real geoLat: 0
+  property real geoLong: 0
+  property string geoLabel: ""
+  property bool loadingGeo: false
+  property string geoError: ""
+  // Same guard shape as stationsSwitching above, for geoLocationProc,
+  // after a deliberate kill-for-restart (a refresh, a clear, or Surprise).
+  property bool geoLookupCancelled: false
 
   // Free-text station-name filter. Transient (not in `state`): cleared on a
   // shell restart, like countryQuery. Passed straight through to the Radio
@@ -209,29 +230,14 @@ finally:
   }
 
   // Debounces the name-search field so a request fires ~350ms after the last
-  // keystroke rather than on every character. With nothing to search by at
-  // all (no name, no country) it just clears the list instead of pulling the
-  // global top stations.
+  // keystroke rather than on every character. reloadOrClear() handles the
+  // "nothing left to search by at all" case by clearing the list instead
+  // of pulling the global top stations.
   Timer {
     id: nameSearchTimer
     interval: 350
     repeat: false
-    onTriggered: {
-      if (root.nameQuery.trim() === "" && state.countryCode === "") {
-        // loadStations() kills any in-flight stationsProc before starting
-        // a fresh one; this early-return branch skipped that, so a fetch
-        // still in flight from a moment ago (e.g. typed a name, then
-        // deleted it within one round-trip) could complete afterward and
-        // silently repopulate the list with results for a query the user
-        // already cleared.
-        stationsProc.running = false
-        stationsModel.clear()
-        root.stationsError = ""
-        root.loadingStations = false
-        return
-      }
-      root.loadStations()
-    }
+    onTriggered: root.reloadOrClear()
   }
 
   function loadFavorites(raw) {
@@ -329,7 +335,7 @@ finally:
   }
 
   onOpenedChanged: {
-    if (root.opened && state.countryCode !== "" && stationsModel.count === 0 && !stationsProc.running) {
+    if (root.opened && root.hasLoadedStations() && stationsModel.count === 0 && !stationsProc.running) {
       root.loadStations()
     }
   }
@@ -345,6 +351,10 @@ finally:
     state.countryName = name
     root.countryQuery = ""
     root.countryMatches = []
+    // A stale "Near me" filter would otherwise AND a brand-new country
+    // pick with an unrelated location, almost always yielding zero
+    // results with no visible explanation why.
+    root.resetGeoFilter()
     root.loadStations()
   }
 
@@ -354,7 +364,30 @@ finally:
   // reload, or the UI shows the new filter as active while the visible
   // list silently keeps ignoring it.
   function hasLoadedStations() {
-    return state.countryCode !== "" || root.nameQuery.trim() !== "" || state.languageCode !== ""
+    return state.countryCode !== "" || root.nameQuery.trim() !== "" || state.languageCode !== "" || root.geoActive
+  }
+
+  // Killing an already-running stationsProc is asynchronous — its exit
+  // can land after the caller has already moved on. Shared by
+  // loadStations() and reloadOrClear()'s empty-clear branch.
+  function killStationsProc() {
+    if (stationsProc.running) root.stationsSwitching = true
+    stationsProc.running = false
+  }
+
+  // Shared by nameSearchTimer and every "clear a filter" function: reload
+  // if any filter is still active, or clear the list directly if not —
+  // never fall through to loadStations() with nothing set, which would
+  // otherwise pull the unfiltered global top-80.
+  function reloadOrClear() {
+    if (root.hasLoadedStations()) {
+      root.loadStations()
+    } else {
+      root.killStationsProc()
+      stationsModel.clear()
+      root.stationsError = ""
+      root.loadingStations = false
+    }
   }
 
   function toggleTag(tagName) {
@@ -388,21 +421,53 @@ finally:
   function clearLanguage() {
     state.languageCode = ""
     state.languageName = ""
-    if (root.hasLoadedStations()) {
-      root.loadStations()
-    } else {
-      // Language was the only active filter — nothing left to search by,
-      // so clear the list directly rather than falling through to
-      // loadStations(), which would otherwise pull the unfiltered global
-      // top-80 (same reasoning as nameSearchTimer's empty-clear branch).
-      stationsProc.running = false
-      stationsModel.clear()
-    }
+    root.reloadOrClear()
+  }
+
+  // Killing an already-running geoLocationProc is asynchronous — its
+  // completion can land after the caller has already moved on. Shared by
+  // findNearMe() and resetGeoFilter() so the kill sequence only needs to
+  // be right in one place.
+  function killGeoLookup() {
+    if (geoLocationProc.running) root.geoLookupCancelled = true
+    geoLocationProc.running = false
+  }
+
+  // Fetches (or refreshes, if already active) the listener's approximate
+  // location via IP geolocation, then applies it as a search filter once
+  // resolved — findNearMe()'s own onStreamFinished handler does the actual
+  // state update and reload, since the lookup is asynchronous.
+  function findNearMe() {
+    root.geoError = ""
+    root.loadingGeo = true
+    root.killGeoLookup()
+    Qt.callLater(function() { geoLocationProc.running = true })
+  }
+
+  // Stops a lookup that might still be in flight — otherwise it could
+  // complete afterward and silently reinstate a filter that was just
+  // dropped, or re-filter an unrelated pick by a stale location. Shared by
+  // clearGeo() and surpriseMe() so a future fix (like the missing
+  // geoError reset this helper replaced) only needs to happen once.
+  function resetGeoFilter() {
+    root.killGeoLookup()
+    root.loadingGeo = false
+    root.geoError = ""
+    root.geoActive = false
+    root.geoLat = 0
+    root.geoLong = 0
+    root.geoLabel = ""
+  }
+
+  function clearGeo() {
+    root.resetGeoFilter()
+    root.reloadOrClear()
   }
 
   function surpriseMe() {
     // Drop any name/language filter first, or the random country would be
     // searched through a stale term and almost always come back empty.
+    // (selectCountry(), called below, resets the geo filter on its own.)
     nameField.text = ""
     root.nameQuery = ""
     state.languageCode = ""
@@ -416,7 +481,7 @@ finally:
     root.stationsError = ""
     root.loadingStations = true
     stationsModel.clear()
-    stationsProc.running = false
+    root.killStationsProc()
     Qt.callLater(function() { stationsProc.running = true })
   }
 
@@ -596,6 +661,67 @@ finally:
     }
   }
 
+  // IP-based geolocation for the "Near me" filter — the same host and
+  // curl-based request shape Omarchy's own bundled weather plugin already
+  // trusts and calls (its omarchy-weather-location helper), not a new
+  // third-party dependency.
+  Process {
+    id: geoLocationProc
+    command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent, "https://wttr.in/?format=j1"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        // A killed-for-restart lookup's belated result — a fresher
+        // refresh (or a clear/Surprise) already superseded it. onExited
+        // is the final signal for this same kill, and resets the guard.
+        if (root.geoLookupCancelled) return
+        root.loadingGeo = false
+        var lat = NaN
+        var long = NaN
+        var label = ""
+        var ok = false
+        try {
+          var data = JSON.parse(String(text || ""))
+          var area = data && Array.isArray(data.nearest_area) && data.nearest_area[0]
+          if (area) {
+            lat = parseFloat(area.latitude)
+            long = parseFloat(area.longitude)
+            var nameEntry = Array.isArray(area.areaName) && area.areaName[0]
+            label = String((nameEntry && nameEntry.value) || "")
+            // Radio Browser returns a raw SQL error (HTTP 500) for
+            // out-of-range coordinates rather than an empty result set
+            // (confirmed live), so a malformed value here must never be
+            // forwarded into the station search. A missing place name
+            // doesn't invalidate an otherwise-usable coordinate pair —
+            // fall back to the coordinates themselves for display.
+            ok = isFinite(lat) && lat >= -90 && lat <= 90 &&
+                 isFinite(long) && long >= -180 && long <= 180
+            if (ok && label.length === 0) label = lat.toFixed(2) + ", " + long.toFixed(2)
+          }
+        } catch (e) { }
+        if (ok) {
+          root.geoActive = true
+          root.geoLat = lat
+          root.geoLong = long
+          root.geoLabel = label
+          root.geoError = ""
+          root.loadStations()
+        } else {
+          // Leaves any previously active geo filter untouched — a failed
+          // refresh shouldn't silently drop an already-working filter.
+          root.geoError = "Couldn't determine your location. Check your connection."
+        }
+      }
+    }
+    onExited: function(code, status) {
+      if (root.geoLookupCancelled) { root.geoLookupCancelled = false; return }
+      // Backstop for when curl never produces a stdout close at all (e.g.
+      // it fails to spawn) — onStreamFinished alone would otherwise leave
+      // loadingGeo stuck true with no feedback.
+      root.loadingGeo = false
+      if (code !== 0) root.geoError = "Couldn't determine your location. Check your connection."
+    }
+  }
+
   Process {
     id: stationsProc
     command: {
@@ -606,6 +732,11 @@ finally:
       // case-sensitive substring match against the station's lowercase
       // `language` field, so the display name is lowercased before sending.
       if (state.languageCode) params.push("language=" + encodeURIComponent(state.languageName.toLowerCase()))
+      if (root.geoActive) {
+        params.push("geo_lat=" + encodeURIComponent(root.geoLat))
+        params.push("geo_long=" + encodeURIComponent(root.geoLong))
+        params.push("geo_distance=" + root.geoDistanceMeters)
+      }
       if (root.nameQuery.trim() !== "") params.push("name=" + encodeURIComponent(root.nameQuery.trim()))
       var tags = []
       if (state.tag) tags.push(state.tag)
@@ -624,6 +755,10 @@ finally:
     }
     stdout: StdioCollector {
       onStreamFinished: {
+        // A killed-for-restart stationsProc's belated result — a fresher
+        // fetch (or an intentional clear) already superseded it. onExited
+        // is the final signal for this same kill, and resets the guard.
+        if (root.stationsSwitching) return
         root.loadingStations = false
         var raw = String(text || "")
         var list = []
@@ -666,6 +801,7 @@ finally:
       }
     }
     onExited: function(code, status) {
+      if (root.stationsSwitching) { root.stationsSwitching = false; return }
       root.loadingStations = false
       if (code !== 0) root.stationsError = "Couldn't reach the radio directory. Check your connection."
     }
@@ -951,6 +1087,69 @@ finally:
             }
           }
 
+          Button {
+            width: parent.width
+            text: "📍 Near me"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY
+            bordered: true
+            active: root.geoActive
+            onClicked: root.findNearMe()
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.geoActive
+
+            Text {
+              width: parent.width - geoClearButton.width - parent.spacing
+              text: root.geoLabel
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+
+            Text {
+              id: geoClearButton
+              text: "✕"
+              color: Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+
+              MouseArea {
+                anchors.fill: parent
+                anchors.margins: -Style.space(6)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.clearGeo()
+              }
+            }
+          }
+
+          Text {
+            width: parent.width
+            visible: root.loadingGeo
+            text: "Finding your location…"
+            color: root.bar.foreground
+            opacity: 0.6
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.geoError !== ""
+            text: root.geoError
+            color: root.bar.foreground
+            wrapMode: Text.WordWrap
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           PanelSlider {
             width: parent.width
             bar: root.bar
@@ -1154,13 +1353,16 @@ finally:
             visible: state.languageCode !== ""
 
             Text {
+              width: parent.width - languageClearButton.width - parent.spacing
               text: state.languageName
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
             }
 
             Text {
+              id: languageClearButton
               text: "✕"
               color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
@@ -1309,7 +1511,7 @@ finally:
             anchors.left: parent.left
             anchors.right: parent.right
             visible: !root.loadingStations && root.stationsError === "" && !root.hasLoadedStations()
-            text: "Pick a country, search by name, or pick a language, to tune in."
+            text: "Pick a country, search by name, pick a language, or find stations near you, to tune in."
             color: root.bar.foreground
             opacity: 0.6
             font.family: root.bar.fontFamily
@@ -1322,7 +1524,7 @@ finally:
             anchors.left: parent.left
             anchors.right: parent.right
             visible: !root.loadingStations && root.stationsError === "" && root.hasLoadedStations() && stationsModel.count === 0
-            text: "No stations found — try a different name, mood, country, or language."
+            text: "No stations found — try a different name, mood, country, language, or location."
             color: root.bar.foreground
             opacity: 0.6
             font.family: root.bar.fontFamily
