@@ -3,6 +3,38 @@
 All notable changes to World Radio are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-09-06
+
+### Added
+
+- **Shuffle** — reorders the current filtered station list into a new
+  random order via Radio Browser's own `order=random`, without touching
+  any active filter. Distinct from Surprise, which ignores filters
+  entirely. ([#13](https://github.com/Macs9319/omarchy-world-radio/issues/13))
+- **Volume boost past 100%** — the volume slider now reaches 130, mpv's
+  own default amplification ceiling; the fill turns a distinct color past
+  100% as a reminder that louder-than-unity gain can clip quieter
+  streams' peaks. ([#14](https://github.com/Macs9319/omarchy-world-radio/issues/14))
+- **History** — the last 15 played stations, most-recent-first; replaying
+  a station already in History bumps it back to the top instead of
+  adding a duplicate. Stored separately from Favorites — see
+  [docs/adr/0001-history-separate-file.md](docs/adr/0001-history-separate-file.md).
+  ([#15](https://github.com/Macs9319/omarchy-world-radio/issues/15))
+- **Sleep timer** — schedule automatic stop after 15, 30, or 60 minutes
+  via a small popover; canceled by picking a new station or any path that
+  ends playback (manual Stop, or mpv exiting unexpectedly).
+  ([#16](https://github.com/Macs9319/omarchy-world-radio/issues/16))
+
+### Fixed
+
+- The transport and quick-filter row didn't vertically center buttons of
+  differing height, and the Stop icon rendered as an oddly-colored boxed
+  emoji instead of a plain monochrome glyph like its neighbors.
+- Every transport and quick-filter control now stays on a single line
+  instead of wrapping to a second one, with Trending/Recently
+  added/Near me hiding individually in Compact mode rather than as a
+  separate group.
+
 ## [1.3.0] - 2026-09-05
 
 ### Added
