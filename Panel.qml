@@ -29,6 +29,13 @@ Panel {
   readonly property string apiHost: "https://de1.api.radio-browser.info"
   readonly property string userAgent: "OmarchyWorldRadio/1.0 (+https://omarchy.org)"
   readonly property int defaultVolume: setting("defaultVolume", 70)
+  // mpv's own out-of-the-box default for volume-max — confirmed live, not
+  // a new capability this plugin is introducing. mpv itself doesn't clamp
+  // set_property volume to any ceiling (confirmed live: it echoes back
+  // whatever's set, past 130 or even a raised volume-max), so this plugin
+  // enforces the bound client-side, same as every other externally- or
+  // user-influenced number in this file.
+  readonly property int volumeCeiling: 130
   // Shared by playStation() (click-tracking) and voteForStation() — both
   // build a URL from an API-supplied stationuuid and need the same shape
   // check before trusting it.
@@ -91,6 +98,27 @@ Panel {
   property bool buffering: false
   property int bufferingPercent: 0
   property bool pendingSurprise: false
+
+  // True only for the single stationsProc invocation shuffleStations()
+  // just triggered. Set exclusively by loadStations() itself (every call
+  // sets it, not just a true one) so a fetch killed-for-restart by some
+  // other action can never leave this stuck true for the fetch that
+  // replaces it. Deliberately not a persistent mode alongside
+  // state.sortOrder's Trending/Recently-added toggle: Shuffle reorders the
+  // current result once, it doesn't become a standing "always random"
+  // ordering.
+  property bool shuffleActive: false
+  // Confirmed live (docs/v5-feature-research.md): Radio Browser appears to
+  // cache identical repeated query strings server-side, so repeating the
+  // exact same order=random request returns the exact same order. This is
+  // a throwaway, monotonically-increasing param whose only job is to make
+  // every Shuffle click's request string different from the last.
+  property int shuffleSeed: 0
+
+  // Sleep timer selection: "off" | "15" | "30" | "60". Transient — a shell
+  // config reload (rare mid-timer) resetting a pending sleep timer is an
+  // acceptable edge case, the same tier as pendingSurprise/loadingGeo.
+  property string sleepTimerOption: "off"
 
   // True for the one mpvProc.exited that fires because playStation() killed
   // the previous station to switch to a new one. Killing an external process
@@ -189,6 +217,18 @@ Panel {
   readonly property int maxFavoritesFileBytes: 1048576
   readonly property int maxFavorites: 500
 
+  // History: the most recently played stations, most-recent-first — see
+  // docs/adr/0001-history-separate-file.md for why this isn't just a
+  // second key in the favorites file above. Same on-disk safety tier as
+  // Favorites (hardenedFileReadScript below is shared by both), but its
+  // own file, own bounds, own lifecycle (fully automatic, always trimmed —
+  // never user-curated the way Favorites is).
+  readonly property string historyPath: stateDir + "world-radio-history.json"
+  property var history: []
+  property bool historyLoaded: false
+  readonly property int maxHistoryFileBytes: 1048576
+  readonly property int maxHistory: 15
+
   ListModel { id: stationsModel }
 
   Process { id: ensureStateDirProc; command: ["mkdir", "-p", root.stateDir]; running: false }
@@ -214,8 +254,11 @@ Panel {
   // a valid file, an oversized file, a FIFO with no writer, and a symlink
   // to an otherwise-legitimate regular file elsewhere — only the valid
   // file's content comes back; everything else exits non-zero with no
-  // stdout, which loadFavorites("") already treats as "no favorites yet".
-  readonly property string favoritesReadScript: `
+  // stdout, which loadFavorites("")/loadHistory("") already treat as
+  // "nothing saved yet". Parameterized by path/max_bytes (argv), so
+  // historyReadProc below reuses this exact script for a second file
+  // rather than duplicating the hardening.
+  readonly property string hardenedFileReadScript: `
 import os, sys, stat as statmod
 path, max_bytes = sys.argv[1], int(sys.argv[2])
 try:
@@ -242,12 +285,20 @@ finally:
 
   Process {
     id: favoritesReadProc
-    command: ["python3", "-c", root.favoritesReadScript, root.favoritesPath, String(root.maxFavoritesFileBytes)]
+    command: ["python3", "-c", root.hardenedFileReadScript, root.favoritesPath, String(root.maxFavoritesFileBytes)]
     stdout: StdioCollector {
       // Empty on any failure branch above (missing path, symlink, non-
       // regular, oversized) — loadFavorites("") already treats that as
       // "no favorites yet", so no separate exit-code handling is needed.
       onStreamFinished: root.loadFavorites(String(text || ""))
+    }
+  }
+
+  Process {
+    id: historyReadProc
+    command: ["python3", "-c", root.hardenedFileReadScript, root.historyPath, String(root.maxHistoryFileBytes)]
+    stdout: StdioCollector {
+      onStreamFinished: root.loadHistory(String(text || ""))
     }
   }
 
@@ -261,11 +312,27 @@ finally:
     printErrors: false
   }
 
+  // Same write-only shape as favoritesFile above, for History's own file.
+  FileView {
+    id: historyFile
+    path: root.historyPath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+  }
+
   Timer {
     id: favoritesSaveTimer
     interval: 200
     repeat: false
     onTriggered: root.flushFavorites()
+  }
+
+  Timer {
+    id: historySaveTimer
+    interval: 200
+    repeat: false
+    onTriggered: root.flushHistory()
   }
 
   // Clears a completed vote's row-level feedback (voteUuid) a few seconds
@@ -288,6 +355,25 @@ finally:
     onTriggered: root.reloadOrClear()
   }
 
+  // Shared uuid/name/playUrl/codec/bitrate/tags bounds — applied whether
+  // the row just came from the API (toggleFavorite/recordHistory) or from
+  // disk (loadFavorites/loadHistory), so a future change to a bound (a new
+  // field, a different length cap) has one place to make it instead of
+  // four. Callers needing an authoritative uuid other than row.uuid (see
+  // loadFavorites, which trusts the favorites file's own map key over
+  // whatever a hand-edited entry's embedded uuid might claim) pass it via
+  // uuidOverride rather than relying on row.uuid.
+  function sanitizeStationRow(row, uuidOverride) {
+    return {
+      uuid: String(uuidOverride !== undefined ? uuidOverride : (row.uuid || "")).slice(0, 64),
+      name: String(row.name || "").slice(0, 200),
+      playUrl: String(row.playUrl || "").slice(0, 2000),
+      codec: String(row.codec || "").slice(0, 32),
+      bitrate: Math.max(0, Math.min(9999999, Number(row.bitrate) || 0)),
+      tags: String(row.tags || "").slice(0, 500)
+    }
+  }
+
   function loadFavorites(raw) {
     if (root.favoritesLoaded) return
     var parsed = {}
@@ -299,20 +385,11 @@ finally:
           if (count >= root.maxFavorites) break
           var f = data.favorites[uuid]
           if (!f || typeof f !== "object") continue
-          var safeUuid = String(uuid).slice(0, 64)
-          var name = String(f.name || "").slice(0, 200)
-          var playUrl = String(f.playUrl || "").slice(0, 2000)
           // Re-validated on load, not just on write — a hand-edited or
           // corrupted file shouldn't be able to hand mpv a non-http(s) URL.
-          if (!safeUuid || !name || !/^https?:\/\//i.test(playUrl)) continue
-          parsed[safeUuid] = {
-            uuid: safeUuid,
-            name: name,
-            playUrl: playUrl,
-            codec: String(f.codec || "").slice(0, 32),
-            bitrate: Math.max(0, Math.min(9999999, Number(f.bitrate) || 0)),
-            tags: String(f.tags || "").slice(0, 500)
-          }
+          var safe = root.sanitizeStationRow(f, uuid)
+          if (!safe.uuid || !safe.name || !/^https?:\/\//i.test(safe.playUrl)) continue
+          parsed[safe.uuid] = safe
           count++
         }
       }
@@ -330,6 +407,61 @@ finally:
     favoritesSaveTimer.restart()
   }
 
+  // History is an ordered array (most-recent-first), unlike favorites'
+  // uuid-keyed map — order is the whole point here, where favorites has
+  // none. Re-validated on load for the same reason as loadFavorites above:
+  // a hand-edited or corrupted file shouldn't be able to hand mpv a
+  // non-http(s) URL.
+  function loadHistory(raw) {
+    if (root.historyLoaded) return
+    var parsed = []
+    try {
+      var data = JSON.parse(raw || "")
+      if (data && typeof data === "object" && Array.isArray(data.history)) {
+        for (var i = 0; i < data.history.length && parsed.length < root.maxHistory; i++) {
+          var h = data.history[i]
+          if (!h || typeof h !== "object") continue
+          var safe = root.sanitizeStationRow(h)
+          if (!safe.uuid || !safe.name || !/^https?:\/\//i.test(safe.playUrl)) continue
+          parsed.push(safe)
+        }
+      }
+    } catch (e) { }
+    root.history = parsed
+    root.historyLoaded = true
+  }
+
+  function flushHistory() {
+    historyFile.setText(JSON.stringify({ version: 1, history: root.history }, null, 2) + "\n")
+  }
+
+  function scheduleHistorySave() {
+    if (!root.historyLoaded) return
+    historySaveTimer.restart()
+  }
+
+  // Records a play in History: bumps an already-present station back to
+  // the top instead of duplicating it (a listener replaying their one
+  // favorite station shouldn't push everything else out), then trims to
+  // maxHistory. Called from playStation() for every successful play.
+  //
+  // Guarded on historyLoaded, same as scheduleHistorySave() below — not
+  // just to skip an unnecessary disk write, but because loadHistory()
+  // unconditionally overwrites root.history the first time it runs
+  // (guarded only by that same flag). Recording a play before the initial
+  // disk read completes would otherwise be silently wiped out the moment
+  // that read finishes and calls loadHistory().
+  function recordHistory(row) {
+    if (!root.historyLoaded || !row || !row.uuid) return
+    var next = [root.sanitizeStationRow(row)]
+    for (var i = 0; i < root.history.length; i++) {
+      if (root.history[i].uuid !== row.uuid) next.push(root.history[i])
+    }
+    if (next.length > root.maxHistory) next.length = root.maxHistory
+    root.history = next
+    root.scheduleHistorySave()
+  }
+
   function isFavorite(uuid) {
     return Object.prototype.hasOwnProperty.call(root.favorites, uuid)
   }
@@ -341,14 +473,7 @@ finally:
     if (next[row.uuid]) {
       delete next[row.uuid]
     } else if (Object.keys(next).length < root.maxFavorites) {
-      next[row.uuid] = {
-        uuid: String(row.uuid).slice(0, 64),
-        name: String(row.name).slice(0, 200),
-        playUrl: String(row.playUrl).slice(0, 2000),
-        codec: String(row.codec).slice(0, 32),
-        bitrate: Math.max(0, Math.min(9999999, Number(row.bitrate) || 0)),
-        tags: String(row.tags).slice(0, 500)
-      }
+      next[row.uuid] = root.sanitizeStationRow(row)
     }
     root.favorites = next
     root.scheduleFavoritesSave()
@@ -403,6 +528,7 @@ finally:
 
     ensureStateDirProc.running = true
     Qt.callLater(function() { favoritesReadProc.running = true })
+    Qt.callLater(function() { historyReadProc.running = true })
   }
 
   onOpenedChanged: {
@@ -554,12 +680,49 @@ finally:
     root.selectCountry(pick.code, pick.name)
   }
 
-  function loadStations() {
+  // shuffle defaults to false for every ordinary caller (a tag toggle, a
+  // country pick, Near me, ...) and is set unconditionally on every call
+  // (not just when true) so this is the single place shuffleActive can
+  // change — otherwise a fetch that gets killed-for-restart by some other
+  // action (see killStationsProc()) before it finishes would leave
+  // shuffleActive stuck true, corrupting whatever fetch replaces it.
+  function loadStations(shuffle) {
     root.stationsError = ""
     root.loadingStations = true
+    root.shuffleActive = !!shuffle
     stationsModel.clear()
     root.killStationsProc()
     Qt.callLater(function() { stationsProc.running = true })
+  }
+
+  // One-shot reorder of the current filtered list via order=random,
+  // distinct from Surprise (which ignores filters entirely) and from
+  // state.sortOrder's Trending/Recently-added toggle (a standing mode,
+  // not a one-time action). Reuses loadStations()'s existing kill+refetch
+  // flow; stationsProc's own command builder reads shuffleActive/
+  // shuffleSeed to swap in order=random plus a cache-busting param for
+  // this one fetch only.
+  function shuffleStations() {
+    if (stationsModel.count === 0) return
+    root.shuffleSeed += 1
+    root.loadStations(true)
+  }
+
+  // "off" cancels outright; "15"/"30"/"60" (re)starts a fresh countdown,
+  // replacing whatever was pending before.
+  function setSleepTimer(option) {
+    root.sleepTimerOption = option
+    sleepTimer.stop()
+    if (option !== "off") {
+      sleepTimer.interval = Number(option) * 60000
+      sleepTimer.start()
+    }
+  }
+
+  function cancelSleepTimer() {
+    if (root.sleepTimerOption === "off") return
+    root.sleepTimerOption = "off"
+    sleepTimer.stop()
   }
 
   // Shared by the country and language pickers: case-insensitive substring
@@ -608,13 +771,19 @@ finally:
     root.bufferingPercent = 0
   }
 
-  function playStation(uuid, name, url) {
-    if (!/^https?:\/\//i.test(url)) return
-    state.stationUuid = uuid
-    state.stationName = name
-    state.stationUrl = url
+  // Takes the full row (uuid/name/playUrl/codec/bitrate/tags), not just the
+  // three fields playback itself needs — every call site already has the
+  // full row on hand, and recordHistory() below needs codec/bitrate/tags
+  // too, so widening this beats re-deriving them from a bare uuid/name/url.
+  function playStation(row) {
+    if (!row || !/^https?:\/\//i.test(row.playUrl)) return
+    state.stationUuid = row.uuid
+    state.stationName = row.name
+    state.stationUrl = row.playUrl
     state.playing = true
     root.resetPlaybackDisplay()
+    root.cancelSleepTimer()
+    root.recordHistory(row)
 
     if (mpvProc.running) root.switchingStation = true
     ipcSocket.connected = false
@@ -625,7 +794,7 @@ finally:
       ipcRetryTimer.restart()
     })
 
-    if (root.stationUuidPattern.test(uuid)) {
+    if (root.stationUuidPattern.test(row.uuid)) {
       clickProc.running = false
       Qt.callLater(function() { clickProc.running = true })
     }
@@ -641,8 +810,7 @@ finally:
       if (stationsModel.get(i).uuid === state.stationUuid) { idx = i; break }
     }
     var nextIdx = idx === -1 ? 0 : (idx + delta + stationsModel.count) % stationsModel.count
-    var s = stationsModel.get(nextIdx)
-    root.playStation(s.uuid, s.name, s.playUrl)
+    root.playStation(stationsModel.get(nextIdx))
   }
 
   function togglePause() {
@@ -662,6 +830,7 @@ finally:
     ipcSocket.connected = false
     state.playing = false
     root.resetPlaybackDisplay()
+    root.cancelSleepTimer()
   }
 
   function handleMpvMessage(line) {
@@ -847,7 +1016,13 @@ finally:
       // Confirmed live: order=lastchange is not a valid Radio Browser order
       // value and silently falls back to the API's default ordering;
       // order=changetimestamp is the value that actually sorts by recency.
-      params.push("order=" + (state.sortOrder || "clickcount"))
+      // shuffleActive overrides state.sortOrder for exactly one fetch (see
+      // shuffleStations()) without touching the persisted sort choice —
+      // _shuffle is a throwaway cache-busting param (see shuffleSeed above),
+      // ignored by the API itself, since repeating the identical
+      // order=random query string otherwise returns the identical order.
+      params.push("order=" + (root.shuffleActive ? "random" : (state.sortOrder || "clickcount")))
+      if (root.shuffleActive) params.push("_shuffle=" + root.shuffleSeed)
       params.push("reverse=true")
       params.push("hidebroken=true")
       return ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent,
@@ -894,8 +1069,7 @@ finally:
         if (root.pendingSurprise) {
           root.pendingSurprise = false
           if (stationsModel.count > 0) {
-            var pick = stationsModel.get(Math.floor(Math.random() * stationsModel.count))
-            root.playStation(pick.uuid, pick.name, pick.playUrl)
+            root.playStation(stationsModel.get(Math.floor(Math.random() * stationsModel.count)))
           }
         }
       }
@@ -962,7 +1136,8 @@ finally:
   Process {
     id: mpvProc
     command: ["mpv", "--no-video", "--idle=yes", "--really-quiet",
-      "--input-ipc-server=" + root.ipcSocketPath, "--volume=" + state.volume, state.stationUrl]
+      "--input-ipc-server=" + root.ipcSocketPath,
+      "--volume=" + Math.max(0, Math.min(root.volumeCeiling, state.volume)), state.stationUrl]
     onExited: function(code, status) {
       if (root.switchingStation) {
         // Expected: playStation() killed this instance to start the next
@@ -975,6 +1150,7 @@ finally:
       ipcSocket.connected = false
       state.playing = false
       root.resetPlaybackDisplay()
+      root.cancelSleepTimer()
     }
   }
 
@@ -988,6 +1164,17 @@ finally:
       if (ipcSocket.connected || attempts > 20) { stop(); return }
       ipcSocket.path = root.ipcSocketPath
       ipcSocket.connected = true
+    }
+  }
+
+  // interval is set right before start() in setSleepTimer() below — there's
+  // no fixed value here since it depends on which duration was picked.
+  Timer {
+    id: sleepTimer
+    repeat: false
+    onTriggered: {
+      root.sleepTimerOption = "off"
+      root.stopPlayback()
     }
   }
 
@@ -1271,6 +1458,88 @@ finally:
                 onClicked: root.stopPlayback()
               }
 
+              // A playback control like Stop, not a browsing feature, so —
+              // unlike Shuffle/Trending/Recently added/Near me below — it
+              // stays visible in Compact mode too.
+              Button {
+                id: sleepTimerButton
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "💤"
+                tooltipText: root.sleepTimerOption === "off"
+                  ? "Sleep timer"
+                  : "Sleep timer: " + root.sleepTimerOption + " min"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                active: root.sleepTimerOption !== "off"
+                onClicked: sleepTimerPopup.opened ? sleepTimerPopup.close() : sleepTimerPopup.open()
+
+                Popup {
+                  id: sleepTimerPopup
+                  parent: sleepTimerButton
+                  x: 0
+                  y: sleepTimerButton.height + Style.spacing.xxs
+                  width: Style.space(110)
+                  padding: Style.spacing.hairline
+                  focus: true
+                  closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+                  background: BorderSurface {
+                    color: Color.popups.background
+                    borderSpec: Border.flat(Color.popups.border, Style.normalBorderWidth)
+                    radius: Style.cornerRadius
+                  }
+
+                  contentItem: Column {
+                    id: sleepTimerColumn
+                    width: sleepTimerPopup.width - Style.spacing.hairline * 2
+                    spacing: Style.spacing.labelGap
+
+                    Repeater {
+                      model: [
+                        { value: "off", label: "Off" },
+                        { value: "15", label: "15 min" },
+                        { value: "30", label: "30 min" },
+                        { value: "60", label: "60 min" }
+                      ]
+                      delegate: Rectangle {
+                        required property var modelData
+                        width: sleepTimerColumn.width
+                        height: Style.spacing.popupRowHeight
+                        color: modelData.value === root.sleepTimerOption
+                          ? Style.hoverFillFor(root.bar.foreground, Color.accent)
+                          : "transparent"
+
+                        Text {
+                          anchors.left: parent.left
+                          anchors.right: parent.right
+                          anchors.verticalCenter: parent.verticalCenter
+                          anchors.leftMargin: Style.spacing.controlPaddingX
+                          anchors.rightMargin: Style.spacing.controlPaddingX
+                          text: modelData.label
+                          color: modelData.value === root.sleepTimerOption
+                            ? Style.hoverStateColor(root.bar.foreground, Color.accent)
+                            : root.bar.foreground
+                          font.family: root.bar.fontFamily
+                          font.pixelSize: Style.font.body
+                        }
+
+                        MouseArea {
+                          anchors.fill: parent
+                          hoverEnabled: true
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: {
+                            root.setSleepTimer(modelData.value)
+                            sleepTimerPopup.close()
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
               Button {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "🎲"
@@ -1287,6 +1556,20 @@ finally:
               // while still dropping out of the row's layout and tab order
               // in Compact — see docs/expand-compact-view-research.md and
               // issue #11.
+              Button {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !state.compactView
+                iconText: "🔀"
+                tooltipText: "Shuffle"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                enabled: stationsModel.count > 0
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: root.shuffleStations()
+              }
+
               Button {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: !state.compactView
@@ -1395,10 +1678,16 @@ finally:
               width: parent.width
               bar: root.bar
               minimum: 0
-              maximum: 100
+              maximum: root.volumeCeiling
               step: 1
               integer: true
               value: state.volume
+              // PanelSlider only exposes a single solid fillColor (no
+              // built-in two-tone/split fill), so a boosted-past-100% state
+              // is signaled by switching the whole fill to Color.urgent
+              // rather than forking the shared component to paint just the
+              // boosted portion differently.
+              fillColor: state.volume > 100 ? Color.urgent : (root.bar ? root.bar.foreground : Color.foreground)
               onMoved: function(v) {
                 state.volume = v
                 if (ipcSocket.connected) {
@@ -1414,6 +1703,53 @@ finally:
               width: parent.width
               spacing: Style.space(12)
               visible: !state.compactView
+
+              // Own section, Expand-only, collapses entirely (separator
+              // included) until the first play — a listener who's never
+              // played anything has nothing to show here yet.
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: root.history.length > 0
+
+                PanelSeparator { foreground: root.bar.foreground }
+                PanelSectionHeader { text: "HISTORY"; foreground: root.bar.foreground }
+
+                Repeater {
+                  model: root.history
+                  delegate: Rectangle {
+                    id: historyRow
+                    required property var modelData
+                    width: parent.width
+                    height: Style.space(28)
+                    radius: Style.cornerRadius
+                    color: historyMouse.containsMouse
+                      ? Style.hoverFillFor(root.bar.foreground, Color.accent)
+                      : "transparent"
+
+                    Text {
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      anchors.leftMargin: Style.space(6)
+                      anchors.rightMargin: Style.space(6)
+                      text: historyRow.modelData.name
+                      color: root.bar.foreground
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      elide: Text.ElideRight
+                    }
+
+                    MouseArea {
+                      id: historyMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.playStation(historyRow.modelData)
+                    }
+                  }
+                }
+              }
 
               PanelSeparator { foreground: root.bar.foreground }
               PanelSectionHeader { text: "SEARCH BY NAME"; foreground: root.bar.foreground }
@@ -1822,7 +2158,7 @@ finally:
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.playStation(row.uuid, row.name, row.playUrl)
+                onClicked: root.playStation(row)
               }
 
               // Only the API's own favicon field, already present in every

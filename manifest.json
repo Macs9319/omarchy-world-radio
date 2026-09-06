@@ -19,7 +19,7 @@
     "defaultSection": "right",
     "defaults": { "defaultVolume": 70 },
     "schema": [
-      { "key": "defaultVolume", "type": "integer", "label": "Default volume", "min": 0, "max": 100, "step": 5, "defaultValue": 70 }
+      { "key": "defaultVolume", "type": "integer", "label": "Default volume", "min": 0, "max": 130, "step": 5, "defaultValue": 70 }
     ]
   }
 }

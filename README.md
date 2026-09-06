@@ -26,16 +26,28 @@ catalog.
   approximate location, no manual location entry required.
 - **Trending and Recently added** — two toggleable sort orders that reorder the current
   list by current popularity or by recency, instead of all-time click count.
+- **Shuffle** — reorders the current filtered station list into a new random order,
+  without touching any active filter. Distinct from Surprise, which ignores filters
+  entirely.
 - **Tuning dial** — Previous/Next buttons step through the current station list; a
   "🎲 Surprise" button spins a random country and station.
 - **Favorites** — star a station to pin it to the top of its list. Favorites are stored
   in `~/.local/state/omarchy/world-radio-favorites.json` and survive shell restarts.
+- **History** — the last 15 stations you've played, most-recent-first; replaying a
+  station already in History bumps it back to the top instead of adding a duplicate.
+  Stored separately from Favorites, in `~/.local/state/omarchy/world-radio-history.json`,
+  and survives shell restarts the same way.
 - **Vote** — upvote a station in the public Radio Browser directory directly from its
   row, independently of favoriting it locally.
 - **Station favicon** — each station in the list shows its own logo, when the directory
   has one.
-- **Live playback controls** — Play/Pause, Stop, and a volume slider, driven over mpv's
-  JSON IPC socket (via Quickshell's native `Socket` type — no extra CLI dependency).
+- **Live playback controls** — Play/Pause, Stop, and a volume slider (up to 130%, mpv's
+  own default amplification ceiling — the fill turns a distinct color past 100% as a
+  reminder that louder-than-unity gain can clip quieter streams' peaks), driven over
+  mpv's JSON IPC socket (via Quickshell's native `Socket` type — no extra CLI
+  dependency).
+- **Sleep timer** — schedule automatic stop after 15, 30, or 60 minutes. Canceled by
+  picking a new station or pressing Stop manually.
 - **Loudness normalization** — mpv's bundled `loudnorm` filter evens out the wide
   loudness swings between stations.
 - **Now playing** — shows the live ICY stream title when the station sends one, and a
@@ -92,8 +104,9 @@ o.bind("SUPER + R", "World Radio", "omarchy-shell shell toggle ronnie.worldradio
 ```
 
 Pick a country, search by name, pick a language, or hit Near me — optionally add a mood
-and/or decade, or reorder the list by Trending/Recently added — then click a station to
-play it. Right-click the bar icon to stop, middle-click to pause/resume.
+and/or decade, reorder the list by Trending/Recently added, or hit Shuffle to reorder it
+randomly — then click a station to play it. Right-click the bar icon to stop,
+middle-click to pause/resume. Click "💤 Sleep timer" to schedule an automatic stop.
 
 Click **Compact** in the top-right of the panel to shrink it down to just playback
 controls once you've found a station; click **Expand** to bring the full browser back.
@@ -102,7 +115,7 @@ controls once you've found a station; click **Expand** to bring the full browser
 
 One setting is exposed in the plugin's settings form:
 
-- **Default volume** (0–100, default 70)
+- **Default volume** (0–130, default 70)
 
 ## Favorites file safety
 
@@ -126,6 +139,11 @@ symlink-following gap, so a hostile or corrupted replacement at that path —
 a FIFO, an oversized file, or a symlink elsewhere — can't hang or bloat the
 shell process. Favorite count (500) and per-field string lengths are also
 capped on both load and write.
+
+History (`~/.local/state/omarchy/world-radio-history.json`) is read and
+written through the exact same hardened helper, capped at 15 entries — see
+[docs/adr/0001-history-separate-file.md](docs/adr/0001-history-separate-file.md)
+for why it's a separate file rather than a second key here.
 
 ## Notes
 
