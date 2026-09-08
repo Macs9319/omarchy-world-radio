@@ -2,12 +2,15 @@
 
 [![CI](https://github.com/Macs9319/omarchy-world-radio/actions/workflows/ci.yml/badge.svg)](https://github.com/Macs9319/omarchy-world-radio/actions/workflows/ci.yml)
 
-An [Omarchy](https://omarchy.org/) shell plugin: pick a country, a language, or just find
-something near you — optionally narrow by mood or decade — and listen to a live internet
-radio station from there. A lightweight nod to [radiooooo.com](https://app.radiooooo.com/)'s
-"spin the globe" idea, built entirely on the open
-[Radio Browser](https://www.radio-browser.info/) directory rather than any proprietary
-catalog.
+Spin the globe, land somewhere you've never been, and hear what's actually playing there
+right now.
+
+World Radio is an [Omarchy](https://omarchy.org/) shell plugin built around that one
+idea. Pick a country, a language, or just search for something nearby, narrow it down by
+mood or decade if you feel like it, and tune in. It's a small nod to
+[radiooooo.com](https://app.radiooooo.com/)'s "spin the globe" trick — but built entirely
+on the open [Radio Browser](https://www.radio-browser.info/) directory instead of a
+closed catalog, so there's no proprietary anything behind it.
 
 ![World Radio panel](preview.png)
 
@@ -155,9 +158,10 @@ for why it's a separate file rather than a second key here.
 
 ## Notes
 
-Station data comes from the community-run [Radio Browser](https://www.radio-browser.info/)
-API. This project is not affiliated with or endorsed by radiooooo.com — it's an
-independent plugin inspired by the idea of exploring the world through radio.
+Every station here comes from the community-run [Radio Browser](https://www.radio-browser.info/)
+directory — thousands of people around the world keeping their local stream listed so
+strangers can find it. This plugin has no affiliation with radiooooo.com; it just liked
+the spin-the-globe idea and built its own version of it.
 
 ## Changelog
 
