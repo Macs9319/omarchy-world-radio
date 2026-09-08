@@ -265,6 +265,11 @@ Panel {
   property bool historyLoaded: false
   readonly property int maxHistoryFileBytes: 1048576
   readonly property int maxHistory: 15
+  // History's own row height cap — independent of maxHistory (how many
+  // entries are kept) so the section can never push the filter pickers
+  // below it further down the column as it fills toward that cap; past
+  // this many rows it scrolls internally instead of growing.
+  readonly property int historyVisibleRows: 5
 
   ListModel { id: stationsModel }
 
@@ -1861,12 +1866,24 @@ finally:
                 PanelSeparator { foreground: root.bar.foreground }
                 PanelSectionHeader { text: "HISTORY"; foreground: root.bar.foreground }
 
-                Repeater {
+                // Fixed height, capped at historyVisibleRows — scrolls
+                // internally past that (same clip-and-flick shape as the
+                // main station list, no explicit scrollbar there either)
+                // instead of growing the whole left column as History
+                // fills up toward maxHistory.
+                ListView {
+                  id: historyList
+                  width: parent.width
+                  height: Math.min(count, root.historyVisibleRows) * (Style.space(28) + spacing) - spacing
+                  clip: true
+                  spacing: Style.space(2)
+                  boundsBehavior: Flickable.StopAtBounds
                   model: root.history
+
                   delegate: Rectangle {
                     id: historyRow
                     required property var modelData
-                    width: parent.width
+                    width: historyList.width
                     height: Style.space(28)
                     radius: Style.cornerRadius
                     color: historyMouse.containsMouse
