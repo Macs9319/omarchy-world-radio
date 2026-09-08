@@ -26,8 +26,40 @@ Panel {
   moduleName: "ronnie.worldradio"
   ipcTarget: "ronnie.worldradio"
 
+  // Unchanged, still used as-is by clickProc/voteProc (out of scope for
+  // server discovery/retry — see notes there). The station/country/
+  // language fetches below use currentApiHost instead.
   readonly property string apiHost: "https://de1.api.radio-browser.info"
   readonly property string userAgent: "OmarchyWorldRadio/1.0 (+https://omarchy.org)"
+
+  // Server discovery: Radio Browser's own documented usage pattern (fetched
+  // directly from https://api.radio-browser.info/) is to resolve
+  // all.api.radio-browser.info for the current mirror pool and retry a
+  // failed request against another entry, rather than hardcoding one
+  // server. GET /json/servers (confirmed live) returns that same pool as
+  // plain JSON — the exact shape every other endpoint here already
+  // parses, so serverListProc below reuses this file's existing curl+JSON
+  // pattern instead of a separate DNS mechanism. apiServers starts as just
+  // the original hardcoded host so every call site has a usable value
+  // immediately, before discovery completes or if it fails outright.
+  property var apiServers: ["de1.api.radio-browser.info"]
+  property int apiServerIndex: 0
+  readonly property string currentApiHost: "https://" + root.apiServers[root.apiServerIndex % root.apiServers.length]
+
+  // One retry each, against the next resolved server — reset per request
+  // (loadStations()/ensureCountriesLoaded()/ensureLanguagesLoaded()), not
+  // per session. geo lookup and clickProc/voteProc are out of scope: geo
+  // lookup isn't even a Radio Browser call (it hits wttr.in), and
+  // clickProc/voteProc's own retry-free, single-attempt shape is
+  // unchanged.
+  property bool stationsRetried: false
+  property bool countriesRetried: false
+  property bool languagesRetried: false
+  // Set every time stationsProc's stdout finishes (success or failure) —
+  // stationsProc, unlike countries/languages, retries on curl's exit code
+  // in onExited rather than a content check in onStreamFinished, so this
+  // is how onExited also learns about a 200-with-malformed-body response.
+  property bool stationsParseOk: false
   readonly property int defaultVolume: setting("defaultVolume", 70)
   // mpv's own out-of-the-box default for volume-max — confirmed live, not
   // a new capability this plugin is introducing. mpv itself doesn't clamp
@@ -95,6 +127,11 @@ Panel {
 
   property bool paused: false
   property string nowPlayingTitle: ""
+  // Arrives on the exact same already-registered "metadata" observe_property
+  // as nowPlayingTitle (icy-genre, not a separate IPC call) — not every
+  // station sends it, so this tolerates being empty the same way
+  // nowPlayingTitle already does.
+  property string nowPlayingGenre: ""
   property bool buffering: false
   property int bufferingPercent: 0
   property bool pendingSurprise: false
@@ -529,6 +566,7 @@ finally:
     ensureStateDirProc.running = true
     Qt.callLater(function() { favoritesReadProc.running = true })
     Qt.callLater(function() { historyReadProc.running = true })
+    Qt.callLater(function() { serverListProc.running = true })
   }
 
   onOpenedChanged: {
@@ -688,6 +726,7 @@ finally:
   // shuffleActive stuck true, corrupting whatever fetch replaces it.
   function loadStations(shuffle) {
     root.stationsError = ""
+    root.stationsRetried = false
     root.loadingStations = true
     root.shuffleActive = !!shuffle
     stationsModel.clear()
@@ -745,6 +784,7 @@ finally:
   function ensureCountriesLoaded() {
     if (root.allCountries.length > 0 || countriesProc.running) return
     root.countriesError = ""
+    root.countriesRetried = false
     root.loadingCountries = true
     countriesProc.running = true
   }
@@ -756,8 +796,17 @@ finally:
   function ensureLanguagesLoaded() {
     if (root.allLanguages.length > 0 || languagesProc.running) return
     root.languagesError = ""
+    root.languagesRetried = false
     root.loadingLanguages = true
     languagesProc.running = true
+  }
+
+  // Shared by the bar icon's tooltip and the panel's now-playing caption
+  // Text — combining title/genre in one place instead of two keeps both
+  // "now playing" surfaces in sync instead of one silently falling behind
+  // the other when a new metadata field is added later.
+  function nowPlayingCaption() {
+    return [root.nowPlayingTitle, root.nowPlayingGenre].filter(function(s) { return s }).join(" · ")
   }
 
   // Shared by playStation(), stopPlayback(), and mpvProc.onExited's
@@ -767,6 +816,7 @@ finally:
   function resetPlaybackDisplay() {
     root.paused = false
     root.nowPlayingTitle = ""
+    root.nowPlayingGenre = ""
     root.buffering = false
     root.bufferingPercent = 0
   }
@@ -811,6 +861,7 @@ finally:
     }
     var nextIdx = idx === -1 ? 0 : (idx + delta + stationsModel.count) % stationsModel.count
     root.playStation(stationsModel.get(nextIdx))
+    root.notifyStationChange()
   }
 
   function togglePause() {
@@ -849,6 +900,7 @@ finally:
       // against mpv's own client.h: "You always get an initial change
       // notification."
       root.nowPlayingTitle = String(msg.data["icy-title"] || "")
+      root.nowPlayingGenre = String(msg.data["icy-genre"] || "")
     } else if (msg.id === root.pauseObserveId && typeof msg.data === "boolean") {
       // Keeps the Pause/Resume label correct even when playback was toggled
       // from a hardware media key or another MPRIS controller, not this panel.
@@ -863,12 +915,40 @@ finally:
     }
   }
 
+  // Fetched once at startup (Component.onCompleted). A failure here just
+  // leaves apiServers at its single-host default — every call site already
+  // tolerates that as a valid (if non-redundant) server list, so no error
+  // needs surfacing for this fetch specifically.
   Process {
-    id: countriesProc
-    command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent, root.apiHost + "/json/countries"]
+    id: serverListProc
+    command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent, "https://all.api.radio-browser.info/json/servers"]
     stdout: StdioCollector {
       onStreamFinished: {
-        root.loadingCountries = false
+        var parsed = []
+        try {
+          var data = JSON.parse(String(text || ""))
+          if (Array.isArray(data)) {
+            for (var i = 0; i < data.length; i++) {
+              var name = String((data[i] && data[i].name) || "")
+              // Loose but real hostname shape check — this is untrusted
+              // network input about to be spliced directly into a URL for
+              // every future station/country/language fetch.
+              if (/^[A-Za-z0-9.-]+$/.test(name) && name.indexOf("..") === -1 && parsed.indexOf(name) === -1) {
+                parsed.push(name)
+              }
+            }
+          }
+        } catch (e) { }
+        if (parsed.length > 0) root.apiServers = parsed
+      }
+    }
+  }
+
+  Process {
+    id: countriesProc
+    command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent, root.currentApiHost + "/json/countries"]
+    stdout: StdioCollector {
+      onStreamFinished: {
         var parsed = []
         var ok = false
         try {
@@ -882,6 +962,15 @@ finally:
             }
           }
         } catch (e) { }
+        // One retry against the next resolved server, matching Radio
+        // Browser's own documented usage pattern — see apiServers above.
+        if (!ok && !root.countriesRetried) {
+          root.countriesRetried = true
+          root.apiServerIndex = (root.apiServerIndex + 1) % root.apiServers.length
+          Qt.callLater(function() { countriesProc.running = true })
+          return
+        }
+        root.loadingCountries = false
         root.allCountries = parsed
         // Previously silent: a failed/empty fetch (network hiccup, the
         // hardcoded API mirror being briefly down) left the search box
@@ -897,10 +986,9 @@ finally:
   Process {
     id: languagesProc
     command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent,
-      root.apiHost + "/json/languages?order=stationcount&reverse=true"]
+      root.currentApiHost + "/json/languages?order=stationcount&reverse=true"]
     stdout: StdioCollector {
       onStreamFinished: {
-        root.loadingLanguages = false
         var parsed = []
         var ok = false
         try {
@@ -916,6 +1004,13 @@ finally:
             }
           }
         } catch (e) { }
+        if (!ok && !root.languagesRetried) {
+          root.languagesRetried = true
+          root.apiServerIndex = (root.apiServerIndex + 1) % root.apiServers.length
+          Qt.callLater(function() { languagesProc.running = true })
+          return
+        }
+        root.loadingLanguages = false
         root.allLanguages = parsed
         root.languagesError = ok ? "" : "Couldn't load the language list. Check your connection."
         root.updateLanguageMatches()
@@ -1026,7 +1121,7 @@ finally:
       params.push("reverse=true")
       params.push("hidebroken=true")
       return ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent,
-        root.apiHost + "/json/stations/search?" + params.join("&")]
+        root.currentApiHost + "/json/stations/search?" + params.join("&")]
     }
     stdout: StdioCollector {
       onStreamFinished: {
@@ -1034,12 +1129,13 @@ finally:
         // fetch (or an intentional clear) already superseded it. onExited
         // is the final signal for this same kill, and resets the guard.
         if (root.stationsSwitching) return
-        root.loadingStations = false
         var raw = String(text || "")
         var list = []
+        var parseOk = false
         try {
           var data = JSON.parse(raw)
           if (Array.isArray(data)) {
+            parseOk = true
             for (var i = 0; i < data.length; i++) {
               var s = data[i]
               var url = String((s && (s.url_resolved || s.url)) || "")
@@ -1064,24 +1160,72 @@ finally:
             }
           }
         } catch (e) { }
+        // Read by onExited below to decide whether a 200-with-garbage-body
+        // response (curl itself succeeds, so exit code alone misses this)
+        // also deserves a retry, not just a nonzero exit code.
+        root.stationsParseOk = parseOk
         for (var j = 0; j < list.length; j++) stationsModel.append(list[j])
         root.resortStations()
-        if (root.pendingSurprise) {
-          root.pendingSurprise = false
-          if (stationsModel.count > 0) {
-            root.playStation(stationsModel.get(Math.floor(Math.random() * stationsModel.count)))
-          }
-        }
       }
     }
     onExited: function(code, status) {
       if (root.stationsSwitching) { root.stationsSwitching = false; return }
+      // One retry against the next resolved server, matching Radio
+      // Browser's own documented usage pattern — see apiServers above.
+      // Covers both a transport failure (nonzero exit) and a degraded
+      // mirror that returns HTTP 200 with a malformed body (parseOk
+      // false despite curl succeeding) — either way, this run produced
+      // nothing usable.
+      if ((code !== 0 || !root.stationsParseOk) && !root.stationsRetried) {
+        root.stationsRetried = true
+        root.apiServerIndex = (root.apiServerIndex + 1) % root.apiServers.length
+        root.loadingStations = true
+        Qt.callLater(function() { stationsProc.running = true })
+        return
+      }
       root.loadingStations = false
-      if (code !== 0) root.stationsError = "Couldn't reach the radio directory. Check your connection."
+      if (code !== 0 || !root.stationsParseOk) {
+        root.stationsError = "Couldn't reach the radio directory. Check your connection."
+      }
+      // Deferred to here (the true final outcome, after any retry) rather
+      // than onStreamFinished — consuming this on a failed attempt that's
+      // about to be retried would silently drop the Surprise pick the
+      // moment a retry succeeds afterward, since the flag would already
+      // be cleared by the time a usable list exists.
+      if (root.pendingSurprise) {
+        root.pendingSurprise = false
+        if (stationsModel.count > 0) {
+          root.playStation(stationsModel.get(Math.floor(Math.random() * stationsModel.count)))
+          root.notifyStationChange()
+        }
+      }
     }
   }
 
   Process { id: clickProc; command: ["curl", "-sS", "--max-time", "6", "-A", root.userAgent, root.apiHost + "/json/url/" + state.stationUuid] }
+
+  // Station name only — no genre (nowPlayingGenre arrives asynchronously
+  // over mpv's IPC after playback starts, later than this fires) and a
+  // generic stock icon rather than the station's favicon (no download-
+  // and-cache mechanism exists in this codebase for that).
+  Process {
+    id: notifyProc
+    // "--" ends option parsing (confirmed live against this machine's
+    // notify-send) — state.stationName is untrusted, API-sourced text;
+    // without it, a station name starting with "-" could be parsed as a
+    // notify-send flag instead of displayed as the notification body.
+    command: ["notify-send", "-a", "World Radio", "-i", "audio-x-generic", "-t", "3000", "--", "Now playing", state.stationName]
+  }
+
+  // Fired only for station changes the listener didn't directly click
+  // (Prev/Next, Surprise) — a direct row click already shows them exactly
+  // what they picked, so notifying there would be redundant. Not called
+  // for Shuffle: shuffleStations() only reorders the visible list, it
+  // never changes what's actually playing.
+  function notifyStationChange() {
+    notifyProc.running = false
+    Qt.callLater(function() { notifyProc.running = true })
+  }
 
   Process {
     id: voteProc
@@ -1225,7 +1369,7 @@ finally:
     tooltipText: state.playing
       ? ("Playing: " + state.stationName + (root.buffering
           ? (" — Buffering… " + root.bufferingPercent + "%")
-          : (root.nowPlayingTitle ? " — " + root.nowPlayingTitle : "")))
+          : (root.nowPlayingCaption() ? " — " + root.nowPlayingCaption() : "")))
       : "World Radio"
     onPressed: function(b) {
       if (b === Qt.RightButton) root.stopPlayback()
@@ -1379,8 +1523,10 @@ finally:
                 }
 
                 Text {
-                  visible: root.buffering || root.nowPlayingTitle !== ""
-                  text: root.buffering ? ("Buffering… " + root.bufferingPercent + "%") : root.nowPlayingTitle
+                  visible: root.buffering || root.nowPlayingCaption() !== ""
+                  text: root.buffering
+                    ? ("Buffering… " + root.bufferingPercent + "%")
+                    : root.nowPlayingCaption()
                   color: Qt.darker(root.bar.foreground, 1.4)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption

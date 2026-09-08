@@ -50,8 +50,14 @@ catalog.
   picking a new station or pressing Stop manually.
 - **Loudness normalization** — mpv's bundled `loudnorm` filter evens out the wide
   loudness swings between stations.
-- **Now playing** — shows the live ICY stream title when the station sends one, and a
-  real "Buffering… NN%" state during the connection gap or a later rebuffer.
+- **Now playing** — shows the live ICY stream title and genre when the station sends
+  them, and a real "Buffering… NN%" state during the connection gap or a later rebuffer.
+- **Desktop notification** — picking Previous, Next, or Surprise sends a notification
+  with the new station's name, so a change you didn't directly click is still obvious.
+  Clicking a station row directly doesn't notify, since you already see what you picked.
+- **Reliable against a single mirror outage** — station/country/language lookups
+  discover Radio Browser's current server pool and retry once against another mirror on
+  failure, instead of giving up the instant one server has a transient hiccup.
 - **Hardware media keys / MPRIS** — mpv's system-wide config already auto-loads the
   `mpv-mpris` script, so `XF86AudioPlay/Pause/Stop` and any MPRIS-aware widget control
   the radio too, with no extra flags needed here.
@@ -69,6 +75,8 @@ catalog.
 - `curl` for talking to the Radio Browser API.
 - `python3` (standard on Omarchy) for reading the favorites file safely — see
   [Favorites file safety](#favorites-file-safety) below.
+- `notify-send` (standard on Omarchy) for the Previous/Next/Surprise desktop
+  notification.
 
 ## Install
 
