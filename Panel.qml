@@ -68,6 +68,10 @@ Panel {
   // enforces the bound client-side, same as every other externally- or
   // user-influenced number in this file.
   readonly property int volumeCeiling: 130
+  // Shared by toggleDeepBass() and ipcSocket's reconnect handler — mpv's
+  // `af remove` matches by exact filter string, so the two call sites
+  // must always agree on this value; naming it once rules out drift.
+  readonly property string deepBassFilter: "lavfi=[bass=g=10]"
   // Shared by playStation() (click-tracking) and voteForStation() — both
   // build a URL from an API-supplied stationuuid and need the same shape
   // check before trusting it.
@@ -123,6 +127,11 @@ Panel {
     // other field above: survives a shell config reload, not a full
     // restart — see docs/expand-compact-view-research.md.
     property bool compactView: false
+    // Deep bass (mpv's `bass` audio filter, fixed gain, see CONTEXT.md for
+    // why this isn't called "Bass boost") — a listener preference, same
+    // persistence tier as compactView above, not reset per stream the way
+    // nowPlayingGenre is.
+    property bool deepBassEnabled: false
   }
 
   property bool paused: false
@@ -876,6 +885,21 @@ finally:
     ipcSocket.flush()
   }
 
+  // Unlike togglePause() above, this always flips the persisted preference
+  // even with nothing playing — a listener can set it before ever hitting
+  // play. Applied immediately on a live connection too, so toggling mid-
+  // stream is heard right away rather than only on the next station.
+  // ipcSocket.onConnectionStateChanged re-applies it on every future
+  // connection, the same way loudnorm already is, so the preference
+  // survives a station change without needing to be reapplied here again.
+  function toggleDeepBass() {
+    state.deepBassEnabled = !state.deepBassEnabled
+    if (ipcSocket.connected) {
+      ipcSocket.write(JSON.stringify({ command: ["af", state.deepBassEnabled ? "add" : "remove", root.deepBassFilter] }) + "\n")
+      ipcSocket.flush()
+    }
+  }
+
   function stopPlayback() {
     if (ipcSocket.connected) {
       ipcSocket.write(JSON.stringify({ command: ["quit"] }) + "\n")
@@ -1345,6 +1369,13 @@ finally:
         // `af <operation> <value>` ("add" to append to the filter chain) —
         // there is no separate "af-add" command in the JSON IPC protocol.
         write(JSON.stringify({ command: ["af", "add", "lavfi=[loudnorm]"] }) + "\n")
+        // Each station change spawns a fresh mpv instance (see
+        // playStation()) with no filters carried over, so a standing Deep
+        // bass preference needs re-applying on every new connection too —
+        // unlike loudnorm above, only when the listener actually has it on.
+        if (state.deepBassEnabled) {
+          write(JSON.stringify({ command: ["af", "add", root.deepBassFilter] }) + "\n")
+        }
         // Registered once per connection. mpv sends an immediate
         // property-change event with the current value on registration
         // (per its own client.h docs), then another on every future
@@ -1824,27 +1855,50 @@ finally:
               }
             }
 
-            PanelSlider {
-              id: volumeSlider
+            // Deep bass sits alongside the volume slider (not the Surprise/
+            // Shuffle/Trending row above) since it's an audio control, not
+            // a browsing action — same reasoning as the sleep timer, and
+            // likewise visible in both Compact and Expand.
+            Row {
+              id: volumeRow
               width: parent.width
-              bar: root.bar
-              minimum: 0
-              maximum: root.volumeCeiling
-              step: 1
-              integer: true
-              value: state.volume
-              // PanelSlider only exposes a single solid fillColor (no
-              // built-in two-tone/split fill), so a boosted-past-100% state
-              // is signaled by switching the whole fill to Color.urgent
-              // rather than forking the shared component to paint just the
-              // boosted portion differently.
-              fillColor: state.volume > 100 ? Color.urgent : (root.bar ? root.bar.foreground : Color.foreground)
-              onMoved: function(v) {
-                state.volume = v
-                if (ipcSocket.connected) {
-                  ipcSocket.write(JSON.stringify({ command: ["set_property", "volume", v] }) + "\n")
-                  ipcSocket.flush()
+              spacing: Style.space(8)
+
+              PanelSlider {
+                id: volumeSlider
+                width: parent.width - deepBassButton.width - volumeRow.spacing
+                bar: root.bar
+                minimum: 0
+                maximum: root.volumeCeiling
+                step: 1
+                integer: true
+                value: state.volume
+                // PanelSlider only exposes a single solid fillColor (no
+                // built-in two-tone/split fill), so a boosted-past-100%
+                // state is signaled by switching the whole fill to
+                // Color.urgent rather than forking the shared component to
+                // paint just the boosted portion differently.
+                fillColor: state.volume > 100 ? Color.urgent : (root.bar ? root.bar.foreground : Color.foreground)
+                onMoved: function(v) {
+                  state.volume = v
+                  if (ipcSocket.connected) {
+                    ipcSocket.write(JSON.stringify({ command: ["set_property", "volume", v] }) + "\n")
+                    ipcSocket.flush()
+                  }
                 }
+              }
+
+              Button {
+                id: deepBassButton
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "🎧"
+                tooltipText: state.deepBassEnabled ? "Deep bass: on" : "Deep bass"
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                active: state.deepBassEnabled
+                onClicked: root.toggleDeepBass()
               }
             }
 

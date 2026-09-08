@@ -45,6 +45,8 @@ closed catalog, so there's no proprietary anything behind it.
   station or hitting Stop cancels it.
 - **Auto volume leveling** — quiet stations and loud ones come out at roughly the same
   volume, so you're not riding the slider every time you switch.
+- **Deep bass** — a one-tap toggle (🎧, next to the volume slider) for a bit more low
+  end. Stays on across stations until you turn it back off.
 - **Now playing** — shows the song or show title and genre when a station sends them,
   plus a real buffering percentage while it connects.
 - **Desktop notification** — switching stations with Previous, Next, or Surprise pops up
