@@ -16,70 +16,57 @@ closed catalog, so there's no proprietary anything behind it.
 
 ## Features
 
-- **Country picker** — a curated grid of flags plus a live search over every country in
-  the Radio Browser directory.
-- **Search by name** — a free-text box that filters stations by name, on its own
-  (worldwide) or AND-ed with the selected country, mood, decade and language. Debounced
-  ~350ms.
-- **Mood and Decade filters** — optional tag chips (pop, rock, jazz, classical, 80s, 90s,
-  2000s, ...) that narrow the station list; combine both at once.
-- **Language filter** — a free-text search over every language Radio Browser tracks,
-  composing with every other filter.
-- **Near me** — an IP-based geolocation filter finds stations within 50km of your
-  approximate location, no manual location entry required.
-- **Trending and Recently added** — two toggleable sort orders that reorder the current
-  list by current popularity or by recency, instead of all-time click count.
-- **Shuffle** — reorders the current filtered station list into a new random order,
-  without touching any active filter. Distinct from Surprise, which ignores filters
-  entirely.
-- **Tuning dial** — Previous/Next buttons step through the current station list; a
-  "🎲 Surprise" button spins a random country and station.
-- **Favorites** — star a station to pin it to the top of its list. Favorites are stored
-  in `~/.local/state/omarchy/world-radio-favorites.json` and survive shell restarts.
-- **History** — the last 15 stations you've played, most-recent-first; replaying a
-  station already in History bumps it back to the top instead of adding a duplicate.
-  Stored separately from Favorites, in `~/.local/state/omarchy/world-radio-history.json`,
-  and survives shell restarts the same way.
-- **Vote** — upvote a station in the public Radio Browser directory directly from its
-  row, independently of favoriting it locally.
-- **Station favicon** — each station in the list shows its own logo, when the directory
-  has one.
-- **Live playback controls** — Play/Pause, Stop, and a volume slider (up to 130%, mpv's
-  own default amplification ceiling — the fill turns a distinct color past 100% as a
-  reminder that louder-than-unity gain can clip quieter streams' peaks), driven over
-  mpv's JSON IPC socket (via Quickshell's native `Socket` type — no extra CLI
-  dependency).
-- **Sleep timer** — schedule automatic stop after 15, 30, or 60 minutes. Canceled by
-  picking a new station or pressing Stop manually.
-- **Loudness normalization** — mpv's bundled `loudnorm` filter evens out the wide
-  loudness swings between stations.
-- **Now playing** — shows the live ICY stream title and genre when the station sends
-  them, and a real "Buffering… NN%" state during the connection gap or a later rebuffer.
-- **Desktop notification** — picking Previous, Next, or Surprise sends a notification
-  with the new station's name, so a change you didn't directly click is still obvious.
-  Clicking a station row directly doesn't notify, since you already see what you picked.
-- **Reliable against a single mirror outage** — station/country/language lookups
-  discover Radio Browser's current server pool and retry once against another mirror on
-  failure, instead of giving up the instant one server has a transient hiccup.
-- **Hardware media keys / MPRIS** — mpv's system-wide config already auto-loads the
-  `mpv-mpris` script, so `XF86AudioPlay/Pause/Stop` and any MPRIS-aware widget control
-  the radio too, with no extra flags needed here.
-- **Compact/Expand toggle** — shrink the panel to just the now-playing hero, transport
-  controls, and volume, or expand back to the full browser. The panel itself resizes,
-  and the choice persists for the session.
-- Two-pane layout (Expand mode): pickers scroll independently on the left, the station
-  list gets its own full-height pane on the right.
+- **Country picker** — flags for popular countries, plus a search box covering every
+  country in the directory.
+- **Search by name** — type a station name to filter the list, on its own or combined
+  with any other filter you've picked.
+- **Mood and decade** — tap a tag like pop, jazz, or 90s to narrow things down; use both
+  together if you like.
+- **Language filter** — search by language, and combine it with whatever else you've set.
+- **Near me** — finds stations within 50km of roughly where you are, using your
+  connection's location. No typing an address.
+- **Trending and Recently added** — sort the list by what's popular right now or what's
+  newest, instead of all-time popularity.
+- **Shuffle** — mixes up the order of your current list without touching any filter.
+  (Surprise, below, is different — it ignores your filters entirely.)
+- **Tuning dial** — Previous/Next step through your list one station at a time; 🎲
+  Surprise picks a totally random country and station.
+- **Favorites** — star a station to keep it at the top of the list. Saved to disk, so
+  it's still there next time you open the panel.
+- **History** — the last 15 stations you played, newest first. Play one again and it
+  just moves back to the top instead of showing up twice.
+- **Vote** — give a station a thumbs up in the public directory, separate from starring
+  it as your own favorite.
+- **Station favicon** — each station shows its own logo, when the directory has one.
+- **Playback controls** — Play/Pause, Stop, and a volume slider that goes past 100% for
+  extra-loud stations (it changes color past 100% as a heads-up that things might
+  distort).
+- **Sleep timer** — set it to stop playing after 15, 30, or 60 minutes. Picking a new
+  station or hitting Stop cancels it.
+- **Auto volume leveling** — quiet stations and loud ones come out at roughly the same
+  volume, so you're not riding the slider every time you switch.
+- **Now playing** — shows the song or show title and genre when a station sends them,
+  plus a real buffering percentage while it connects.
+- **Desktop notification** — switching stations with Previous, Next, or Surprise pops up
+  a notification with the new station's name, so you always know what just started.
+- **More reliable** — if the station directory's server has a brief hiccup, this plugin
+  automatically tries again instead of just giving up.
+- **Media keys** — your keyboard's play/pause/stop buttons work automatically, and so
+  does any other app that can control media playback.
+- **Compact mode** — shrink the panel down to just what's playing and the basic
+  controls, or expand it back out to browse. It remembers which one you had open.
+- In Expand mode, filters live on the left and the station list gets the whole right
+  side, each scrolling on its own.
 
 ## Requirements
 
-- [Omarchy](https://omarchy.org/) with the shell (Quickshell) plugin system.
-- `mpv` for playback (with the `mpv-mpris` script for hardware media key support —
-  install via `omarchy pkg add mpv-mpris` if it isn't already on your system).
-- `curl` for talking to the Radio Browser API.
-- `python3` (standard on Omarchy) for reading the favorites file safely — see
-  [Favorites file safety](#favorites-file-safety) below.
-- `notify-send` (standard on Omarchy) for the Previous/Next/Surprise desktop
-  notification.
+- [Omarchy](https://omarchy.org/), with its shell (Quickshell) plugin system — this
+  comes standard.
+- `mpv`, the actual player doing the playback. Grab `mpv-mpris` too
+  (`omarchy pkg add mpv-mpris`) if you want your media keys to work.
+- `curl`, for talking to the station directory.
+- `python3` (already on Omarchy) — used to read your saved favorites and history safely.
+- `notify-send` (already on Omarchy) — for the station-change notification.
 
 ## Install
 
@@ -102,7 +89,7 @@ omarchy plugin remove ronnie.worldradio
 
 This disables the plugin and deletes `~/.config/omarchy/plugins/ronnie.worldradio`. It
 doesn't touch anything outside that folder — no other config files are modified. If you
-also added the optional keybinding from Usage below, remove that line yourself from
+added the optional keybinding from Usage below, remove that line yourself from
 `~/.config/hypr/bindings.lua`.
 
 ## Usage
@@ -115,9 +102,9 @@ o.bind("SUPER + R", "World Radio", "omarchy-shell shell toggle ronnie.worldradio
 ```
 
 Pick a country, search by name, pick a language, or hit Near me — optionally add a mood
-and/or decade, reorder the list by Trending/Recently added, or hit Shuffle to reorder it
-randomly — then click a station to play it. Right-click the bar icon to stop,
-middle-click to pause/resume. Click "💤 Sleep timer" to schedule an automatic stop.
+and/or decade, reorder the list by Trending/Recently added, or hit Shuffle to mix it up
+— then click a station to play it. Right-click the bar icon to stop, middle-click to
+pause/resume. Click "💤 Sleep timer" to schedule an automatic stop.
 
 Click **Compact** in the top-right of the panel to shrink it down to just playback
 controls once you've found a station; click **Expand** to bring the full browser back.
@@ -128,33 +115,38 @@ One setting is exposed in the plugin's settings form:
 
 - **Default volume** (0–130, default 70)
 
-## Favorites file safety
+## Your data
 
-Favorites live at `~/.local/state/omarchy/world-radio-favorites.json`, a fixed,
-predictable path. Reading it goes through a small Python helper (bundled in
-`Panel.qml`, not a separate file) that opens it with `O_NOFOLLOW | O_NONBLOCK`
-and validates the result on the same file descriptor before reading a single
-byte:
+Favorites and History are saved as plain files on your machine —
+`~/.local/state/omarchy/world-radio-favorites.json` and
+`.../world-radio-history.json`. Reading them back is done carefully, so a corrupted or
+tampered file can't cause problems: worst case, it's just treated as if you had no
+favorites yet. (Wondering why History gets its own file instead of sharing one with
+Favorites? There's a short note in
+[docs/adr/0001-history-separate-file.md](docs/adr/0001-history-separate-file.md).)
 
-- **`O_NOFOLLOW`** refuses to open if the path is a symlink, instead of
-  transparently reading whatever it points to.
-- **`O_NONBLOCK`** makes opening a FIFO return immediately instead of blocking
-  forever waiting for a writer.
-- Only a plain regular file, checked via `fstat()` on the already-open
-  descriptor (never a second lookup of the path), is read — and only up to a
-  1 MiB cap, enforced by the read itself rather than trimmed afterward.
+<details>
+<summary>The technical version</summary>
 
-This closes both a TOCTOU window (checking and reading must be the same
-open, not two lookups of a path that could change in between) and a
-symlink-following gap, so a hostile or corrupted replacement at that path —
-a FIFO, an oversized file, or a symlink elsewhere — can't hang or bloat the
-shell process. Favorite count (500) and per-field string lengths are also
-capped on both load and write.
+Reading either file goes through a small Python helper (bundled in `Panel.qml`, not a
+separate file) that opens it with `O_NOFOLLOW | O_NONBLOCK` and validates the result on
+the same file descriptor before reading a single byte:
 
-History (`~/.local/state/omarchy/world-radio-history.json`) is read and
-written through the exact same hardened helper, capped at 15 entries — see
-[docs/adr/0001-history-separate-file.md](docs/adr/0001-history-separate-file.md)
-for why it's a separate file rather than a second key here.
+- **`O_NOFOLLOW`** refuses to open if the path is a symlink, instead of transparently
+  reading whatever it points to.
+- **`O_NONBLOCK`** makes opening a FIFO return immediately instead of blocking forever
+  waiting for a writer.
+- Only a plain regular file, checked via `fstat()` on the already-open descriptor (never
+  a second lookup of the path), is read — and only up to a 1 MiB cap, enforced by the
+  read itself rather than trimmed afterward.
+
+This closes both a TOCTOU window (checking and reading must be the same open, not two
+lookups of a path that could change in between) and a symlink-following gap, so a
+hostile or corrupted replacement at that path — a FIFO, an oversized file, or a symlink
+elsewhere — can't hang or bloat the shell process. Favorite count (500), History count
+(15), and per-field string lengths are also capped on both load and write.
+
+</details>
 
 ## Notes
 

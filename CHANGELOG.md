@@ -143,7 +143,7 @@ All notable changes to World Radio are documented here. Format follows
   exactly once with `O_NOFOLLOW | O_NONBLOCK` (refusing a symlink outright,
   and returning immediately instead of blocking on a FIFO), and every
   check — regular-file, size, the read itself — runs against that one
-  descriptor. See [Favorites file safety](README.md#favorites-file-safety)
+  descriptor. See ["The technical version" under Your data](README.md#your-data)
   for the full explanation. Found and confirmed across three review rounds
   during the [Omarchy Plugin Marketplace](https://omarchyplugins.com/)
   submission ([listing issue](https://github.com/HANCORE-linux/omarchy-plugin-marketplace/issues/2369)).
