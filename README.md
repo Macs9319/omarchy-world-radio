@@ -25,8 +25,8 @@ closed catalog, so there's no proprietary anything behind it.
 - **Language filter** — search by language, and combine it with whatever else you've set.
 - **Near me** — finds stations within 50km of roughly where you are, using your
   connection's location. No typing an address.
-- **Trending and Recently added** — sort the list by what's popular right now or what's
-  newest, instead of all-time popularity.
+- **Trending** — sort the list by what's popular right now, instead of all-time
+  popularity.
 - **Shuffle** — mixes up the order of your current list without touching any filter.
   (Surprise, below, is different — it ignores your filters entirely.)
 - **Tuning dial** — Previous/Next step through your list one station at a time; 🎲
@@ -108,8 +108,8 @@ o.bind("SUPER + R", "World Radio", "omarchy-shell shell toggle ronnie.worldradio
 ```
 
 Pick a country, search by name, pick a language, or hit Near me — optionally add a mood
-and/or decade, reorder the list by Trending/Recently added, or hit Shuffle to mix it up
-— then click a station to play it. Right-click the bar icon to stop, middle-click to
+and/or decade, reorder the list by Trending, or hit Shuffle to mix it up — then click a
+station to play it. Right-click the bar icon to stop, middle-click to
 pause/resume. Click "💤 Sleep timer" to schedule an automatic stop.
 
 Click **Compact** in the top-right of the panel to shrink it down to just playback

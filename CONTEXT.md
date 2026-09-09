@@ -18,8 +18,9 @@ _Avoid_: Saved stations, bookmarks
 An automatically-maintained, size-capped list of the most recently played
 distinct stations, most-recent-first, updated on every successful play and
 bumped (not duplicated) on replay. Deliberately not named "Recently played"
-to avoid confusion with the existing "Recently added" sort order, an
-unrelated concept (directory metadata, not listener activity).
+— at the time this was named, a "Recently added" sort order also existed
+(directory metadata, not listener activity; since removed), and the two
+names sitting side by side would have been a near-miss confusion.
 _Avoid_: Recently played, recents, play history
 
 **Shuffle**:

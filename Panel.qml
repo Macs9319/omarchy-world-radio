@@ -700,6 +700,13 @@ finally:
     var runtimeDir = Quickshell.env("XDG_RUNTIME_DIR")
     ipcSocketPath = (runtimeDir && runtimeDir.length > 0 ? runtimeDir : "/tmp") + "/omarchy-worldradio-" + Math.floor(Math.random() * 1e9) + ".sock"
 
+    // One-time migration: Recently added's button is gone, but a listener
+    // who had it active still has "changetimestamp" persisted in state
+    // from before — with no button left to turn it off, they'd otherwise
+    // be stuck sorting by recency indefinitely with no visible indicator
+    // of why.
+    if (state.sortOrder === "changetimestamp") state.sortOrder = ""
+
     ensureStateDirProc.running = true
     Qt.callLater(function() { favoritesReadProc.running = true })
     Qt.callLater(function() { historyReadProc.running = true })
@@ -781,10 +788,11 @@ finally:
   }
 
   // Mutually exclusive with itself only (not with tag/decade, which stay
-  // independent filters): picking "votes" while "changetimestamp" is active
-  // switches directly, and re-picking the active one clears back to the
+  // independent filters): re-picking the active order clears back to the
   // default clickcount ordering — same "one active value" toggle shape as
-  // toggleTag/toggleDecade, applied to a single field.
+  // toggleTag/toggleDecade, applied to a single field. Generic (any order
+  // string), though "votes" (Trending) is the only one a button reaches
+  // today — Recently added ("changetimestamp") was removed.
   function toggleSortOrder(order) {
     state.sortOrder = state.sortOrder === order ? "" : order
     if (root.hasLoadedStations()) root.loadStations()
@@ -1717,25 +1725,14 @@ finally:
             // (plugins/services/media/BarWidget.qml), reusing the identical
             // prev/next glyphs plus its play/pause glyphs (unused elsewhere
             // in this file until now) and its "primary action is slightly
-            // larger" treatment for Pause/Resume. Originally one centered,
-            // content-sized Row holding all ten buttons below, back when
-            // it held five or six — see docs/compact-transport-buttons-
-            // research.md. Ten buttons later (Sleep timer and Shuffle both
-            // landed here since), that single Row silently overflowed the
-            // column's actual width, and being centered pushed the
-            // overflow's tail (Near me, the rightmost button) entirely
-            // past the visible edge. (Flow was tried here first to let it
-            // wrap instead of overflow, but QtQuick's Flow forbids anchors
-            // on its children entirely — every button below anchors
-            // verticalCenter to its row, which Flow doesn't tolerate the
-            // way Row does — so wrapping would have collapsed every
-            // button onto the same coordinates instead.) Split into two
-            // Rows along the boundary that already existed here — always-
-            // visible controls vs. the four Expand-only ones below —
-            // rather than an arbitrary wrap point; each comfortably fits
-            // the column on its own, and the second Row already collapses
-            // to zero height in Compact mode since every child in it is
-            // already individually hidden there.
+            // larger" treatment for Pause/Resume. Once grew to ten buttons
+            // (Sleep timer, Shuffle, and Recently added all landed here
+            // over time) and silently overflowed this column's width —
+            // Recently added's removal brought it back down to nine,
+            // fitting comfortably in one Row again. See
+            // docs/compact-transport-buttons-research.md for the original
+            // shape, and git history on this comment for the overflow
+            // detour if a similar growth spurt happens again.
             Row {
               anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(6)
@@ -1793,7 +1790,7 @@ finally:
               }
 
               // A playback control like Stop, not a browsing feature, so —
-              // unlike Shuffle/Trending/Recently added/Near me below — it
+              // unlike Shuffle/Trending/Near me below — it
               // stays visible in Compact mode too.
               Button {
                 id: sleepTimerButton
@@ -1884,28 +1881,18 @@ finally:
                 verticalPadding: Style.spacing.controlPaddingY
                 onClicked: root.surpriseMe()
               }
-            }
 
-            // Shuffle/Trending/Recently added/Near me — Expand-only, hidden
-            // as a whole Row (matching the geo-detail Column right below,
-            // the correct pattern for this): a positioner's own spacing
-            // applies around any child whose OWN visible is still true,
-            // even at zero content height, so hiding only the four buttons
-            // individually (the pre-split code's approach, needed back
-            // when they shared a line with always-visible buttons) would
-            // leave a stray gap here in Compact mode. Second Row, not more
-            // buttons squeezed onto the one above, since ten buttons
-            // together don't fit this column's width (confirmed: ~454px
-            // of buttons+spacing in a ~320px column) — see
-            // docs/expand-compact-view-research.md and issue #11 for why
-            // this content is Expand-only at all.
-            Row {
-              visible: !state.compactView
-              anchors.horizontalCenter: parent.horizontalCenter
-              spacing: Style.space(6)
-
+              // Hidden individually (not as a group) — safe here because
+              // this Row always has the always-visible buttons above as
+              // siblings, so it's never entirely empty in Compact mode
+              // the way the old, since-removed second Row could be (that
+              // Row needed visible:false on itself instead, once Recently
+              // added's removal left it holding fewer buttons — simplest
+              // to fold these back into the one Row above rather than
+              // keep two).
               Button {
                 anchors.verticalCenter: parent.verticalCenter
+                visible: !state.compactView
                 iconText: "🔀"
                 tooltipText: "Shuffle"
                 foreground: root.bar.foreground
@@ -1919,6 +1906,7 @@ finally:
 
               Button {
                 anchors.verticalCenter: parent.verticalCenter
+                visible: !state.compactView
                 iconText: "🔥"
                 tooltipText: "Trending"
                 foreground: root.bar.foreground
@@ -1931,18 +1919,7 @@ finally:
 
               Button {
                 anchors.verticalCenter: parent.verticalCenter
-                iconText: "🆕"
-                tooltipText: "Recently added"
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                horizontalPadding: Style.spacing.controlPaddingX
-                verticalPadding: Style.spacing.controlPaddingY
-                active: state.sortOrder === "changetimestamp"
-                onClicked: root.toggleSortOrder("changetimestamp")
-              }
-
-              Button {
-                anchors.verticalCenter: parent.verticalCenter
+                visible: !state.compactView
                 iconText: "📍"
                 tooltipText: "Near me"
                 foreground: root.bar.foreground
