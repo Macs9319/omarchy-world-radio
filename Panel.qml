@@ -1717,12 +1717,25 @@ finally:
             // (plugins/services/media/BarWidget.qml), reusing the identical
             // prev/next glyphs plus its play/pause glyphs (unused elsewhere
             // in this file until now) and its "primary action is slightly
-            // larger" treatment for Pause/Resume. Deliberately not full-width
-            // like every other row in this column — see
-            // docs/compact-transport-buttons-research.md. Trending/Recently-
-            // added/Near-me sit on this same line too (each individually
-            // gated by visible: !state.compactView below) rather than in
-            // their own row, so nothing wraps to a second line in Expand.
+            // larger" treatment for Pause/Resume. Originally one centered,
+            // content-sized Row holding all ten buttons below, back when
+            // it held five or six — see docs/compact-transport-buttons-
+            // research.md. Ten buttons later (Sleep timer and Shuffle both
+            // landed here since), that single Row silently overflowed the
+            // column's actual width, and being centered pushed the
+            // overflow's tail (Near me, the rightmost button) entirely
+            // past the visible edge. (Flow was tried here first to let it
+            // wrap instead of overflow, but QtQuick's Flow forbids anchors
+            // on its children entirely — every button below anchors
+            // verticalCenter to its row, which Flow doesn't tolerate the
+            // way Row does — so wrapping would have collapsed every
+            // button onto the same coordinates instead.) Split into two
+            // Rows along the boundary that already existed here — always-
+            // visible controls vs. the four Expand-only ones below —
+            // rather than an arbitrary wrap point; each comfortably fits
+            // the column on its own, and the second Row already collapses
+            // to zero height in Compact mode since every child in it is
+            // already individually hidden there.
             Row {
               anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(6)
@@ -1871,15 +1884,28 @@ finally:
                 verticalPadding: Style.spacing.controlPaddingY
                 onClicked: root.surpriseMe()
               }
+            }
 
-              // Hidden individually (not as a group) so these three stay on
-              // the same line as the always-visible buttons above in Expand,
-              // while still dropping out of the row's layout and tab order
-              // in Compact — see docs/expand-compact-view-research.md and
-              // issue #11.
+            // Shuffle/Trending/Recently added/Near me — Expand-only, hidden
+            // as a whole Row (matching the geo-detail Column right below,
+            // the correct pattern for this): a positioner's own spacing
+            // applies around any child whose OWN visible is still true,
+            // even at zero content height, so hiding only the four buttons
+            // individually (the pre-split code's approach, needed back
+            // when they shared a line with always-visible buttons) would
+            // leave a stray gap here in Compact mode. Second Row, not more
+            // buttons squeezed onto the one above, since ten buttons
+            // together don't fit this column's width (confirmed: ~454px
+            // of buttons+spacing in a ~320px column) — see
+            // docs/expand-compact-view-research.md and issue #11 for why
+            // this content is Expand-only at all.
+            Row {
+              visible: !state.compactView
+              anchors.horizontalCenter: parent.horizontalCenter
+              spacing: Style.space(6)
+
               Button {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !state.compactView
                 iconText: "🔀"
                 tooltipText: "Shuffle"
                 foreground: root.bar.foreground
@@ -1893,7 +1919,6 @@ finally:
 
               Button {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !state.compactView
                 iconText: "🔥"
                 tooltipText: "Trending"
                 foreground: root.bar.foreground
@@ -1906,7 +1931,6 @@ finally:
 
               Button {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !state.compactView
                 iconText: "🆕"
                 tooltipText: "Recently added"
                 foreground: root.bar.foreground
@@ -1919,7 +1943,6 @@ finally:
 
               Button {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: !state.compactView
                 iconText: "📍"
                 tooltipText: "Near me"
                 foreground: root.bar.foreground
