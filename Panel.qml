@@ -1733,8 +1733,24 @@ finally:
             // docs/compact-transport-buttons-research.md for the original
             // shape, and git history on this comment for the overflow
             // detour if a similar growth spurt happens again.
+            //
+            // Left-anchored, not centered: leftColumn's vertical ScrollBar
+            // is an overlay pinned to this column's true right edge
+            // (confirmed by reading the installed Qt Quick Controls Basic
+            // style's ScrollView.qml/ScrollBar.qml — never subtracted from
+            // available width on its own), so the row's rightmost button
+            // could still end up under it when scrolling is active. For a
+            // *centered* row, reserving margin by narrowing the container
+            // only helps the right edge by giving up an equal amount on
+            // the left — a real risk given this row's own left-most
+            // buttons (Previous, Play/Pause) have never had much slack to
+            // spare either. Left-anchoring sidesteps that trade-off
+            // entirely: the left edge stays exactly where it already
+            // safely was, and every bit of the row's natural slack shifts
+            // to the right edge instead of being split, directly
+            // improving clearance on the side that actually needs it.
             Row {
-              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.left: parent.left
               spacing: Style.space(6)
 
               Button {
