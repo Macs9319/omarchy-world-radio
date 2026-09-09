@@ -562,7 +562,7 @@ finally:
     var rows = []
     for (var i = 0; i < stationsModel.count; i++) {
       var r = stationsModel.get(i)
-      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags, favicon: r.favicon })
+      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags, favicon: r.favicon, homepage: r.homepage, votes: r.votes })
     }
     rows.sort(function(a, b) {
       var af = root.isFavorite(a.uuid) ? 0 : 1
@@ -593,6 +593,13 @@ finally:
     if (!code || !/^[A-Za-z]{2}$/.test(code)) return "🌐"
     var cc = code.toUpperCase()
     return String.fromCodePoint(cc.charCodeAt(0) - 65 + 0x1F1E6, cc.charCodeAt(1) - 65 + 0x1F1E6)
+  }
+
+  // Abbreviated so a popular station's vote count doesn't dominate the
+  // already-tight, already-eliding codec/bitrate/tags caption line.
+  function formatVoteCount(n) {
+    if (n >= 1000) return (n / 1000).toFixed(1) + "k"
+    return String(n)
   }
 
   function selectCountry(code, name) {
@@ -1177,6 +1184,12 @@ finally:
               // to hand one straight to it.
               var favicon = String((s && s.favicon) || "")
               if (!/^https?:\/\//i.test(favicon)) favicon = ""
+              // Same scheme check as favicon above — this gets handed to
+              // Qt.openUrlExternally(), not just displayed, so an untrusted
+              // non-http(s) scheme (e.g. a local file:// or a custom
+              // handler) must never reach it.
+              var homepage = String((s && s.homepage) || "")
+              if (!/^https?:\/\//i.test(homepage)) homepage = ""
               list.push({
                 uuid: uuid,
                 name: name,
@@ -1184,7 +1197,9 @@ finally:
                 codec: String((s && s.codec) || ""),
                 bitrate: Number((s && s.bitrate) || 0),
                 tags: String((s && s.tags) || ""),
-                favicon: favicon
+                favicon: favicon,
+                homepage: homepage,
+                votes: Number((s && s.votes) || 0)
               })
             }
           }
@@ -2359,6 +2374,8 @@ finally:
               required property int bitrate
               required property string tags
               required property string favicon
+              required property string homepage
+              required property int votes
 
               width: stationsList.width
               height: Style.space(44)
@@ -2402,7 +2419,7 @@ finally:
 
               Column {
                 anchors.left: faviconImage.visible ? faviconImage.right : parent.left
-                anchors.right: voteButton.left
+                anchors.right: homepageButton.visible ? homepageButton.left : voteButton.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: faviconImage.visible ? Style.space(6) : Style.space(10)
                 anchors.rightMargin: Style.space(6)
@@ -2419,11 +2436,48 @@ finally:
 
                 Text {
                   width: parent.width
-                  text: [row.codec, row.bitrate ? row.bitrate + "kbps" : "", row.tags].filter(function(s) { return s }).join(" · ")
+                  text: [row.codec, row.bitrate ? row.bitrate + "kbps" : "", row.tags, row.votes > 0 ? root.formatVoteCount(row.votes) + " votes" : ""].filter(function(s) { return s }).join(" · ")
                   color: Qt.darker(root.bar.foreground, 1.4)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
+                }
+              }
+
+              // Absent for a station with no homepage (row.homepage is
+              // already "" for anything that wasn't a valid http(s) URL —
+              // see stationsProc's own scheme check). The name/caption
+              // Column and voteButton's own hit-area both branch on this
+              // visibility to reflow into the freed space, the same way
+              // faviconImage's absence already does above.
+              Text {
+                id: homepageButton
+                visible: row.homepage !== ""
+                text: "🔗"
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+                width: Style.space(20)
+                horizontalAlignment: Text.AlignHCenter
+                anchors.right: voteButton.left
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+
+                // Same split-the-gap shape as voteButton/starButton below:
+                // expands less toward voteButton (its only neighbor) than
+                // on every other side.
+                MouseArea {
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.topMargin: -Style.space(6)
+                  anchors.bottomMargin: -Style.space(6)
+                  anchors.leftMargin: -Style.space(6)
+                  anchors.rightMargin: -Style.space(3)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: Qt.openUrlExternally(row.homepage)
                 }
               }
 
@@ -2457,14 +2511,19 @@ finally:
                 anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
 
-                // Expands outward on every side except toward starButton —
-                // a uniform -Style.space(6) here would reach exactly
-                // Style.space(6) past this icon on the right, meeting (and
-                // overlapping) starButton's own -Style.space(6) expansion
-                // to its left, since the two icons only sit Style.space(6)
-                // apart to begin with. Splitting that gap in half instead
-                // of doubling it into an overlap keeps a click nearest
-                // each icon going to that icon.
+                // Expands outward on every side except toward its two
+                // neighbors (homepageButton on the left, starButton on the
+                // right) — a uniform -Style.space(6) on either of those
+                // sides would reach exactly Style.space(6) past this icon,
+                // meeting (and overlapping) the neighbor's own -Style.space(6)
+                // expansion, since icons only sit Style.space(6) apart to
+                // begin with. Splitting each shared gap in half instead of
+                // doubling it into an overlap keeps a click nearest each
+                // icon going to that icon. When homepageButton is invisible
+                // (no homepage for this station), nothing claims its half
+                // of that gap — an invisible item's own MouseArea gets no
+                // input at all — so the full -6 is reclaimed here instead
+                // of leaving a dead unclickable strip.
                 MouseArea {
                   anchors.top: parent.top
                   anchors.bottom: parent.bottom
@@ -2472,7 +2531,7 @@ finally:
                   anchors.right: parent.right
                   anchors.topMargin: -Style.space(6)
                   anchors.bottomMargin: -Style.space(6)
-                  anchors.leftMargin: -Style.space(6)
+                  anchors.leftMargin: homepageButton.visible ? -Style.space(3) : -Style.space(6)
                   anchors.rightMargin: -Style.space(3)
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor

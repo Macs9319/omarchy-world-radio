@@ -36,8 +36,10 @@ closed catalog, so there's no proprietary anything behind it.
 - **History** — the last 15 stations you played, newest first. Play one again and it
   just moves back to the top instead of showing up twice.
 - **Vote** — give a station a thumbs up in the public directory, separate from starring
-  it as your own favorite.
+  it as your own favorite. Its vote count shows in the row too, when it has one.
 - **Station favicon** — each station shows its own logo, when the directory has one.
+- **Homepage link** — a 🔗 next to vote/star opens the station's own website, when it has
+  one listed.
 - **Playback controls** — Play/Pause, Stop, and a volume slider that goes past 100% for
   extra-loud stations (it changes color past 100% as a heads-up that things might
   distort).
