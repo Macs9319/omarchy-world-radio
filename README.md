@@ -32,7 +32,9 @@ closed catalog, so there's no proprietary anything behind it.
 - **Tuning dial** — Previous/Next step through your list one station at a time; 🎲
   Surprise picks a totally random country and station.
 - **Favorites** — star a station to keep it at the top of the list. Saved to disk, so
-  it's still there next time you open the panel.
+  it's still there next time you open the panel. Refreshed against the live directory
+  once per session (the first time you open the panel), so stale details don't linger
+  and a station pulled from the directory quietly drops off your list.
 - **History** — the last 15 stations you played, newest first. Play one again and it
   just moves back to the top instead of showing up twice.
 - **Vote** — give a station a thumbs up in the public directory, separate from starring

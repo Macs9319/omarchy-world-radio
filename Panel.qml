@@ -253,6 +253,28 @@ Panel {
   readonly property string favoritesPath: stateDir + "world-radio-favorites.json"
   property var favorites: ({})
   property bool favoritesLoaded: false
+  // Set the first time refreshFavorites() runs (on panel open), so it
+  // fires at most once per session — not on every subsequent open/close
+  // of the same panel instance. Only latched once an actual fetch is
+  // sent (see refreshFavorites()) — an empty or oversized favorites list
+  // leaves this false so a later open can still try again.
+  property bool favoritesRefreshed: false
+  property bool favoritesRefreshRetried: false
+  // Captured once, when the request is built, rather than re-read live
+  // from root.favorites at completion time — root.favorites can change
+  // while the up-to-8s request is in flight (the listener starring or
+  // unstarring something), and the merge in favoritesRefreshProc's
+  // completion handler needs to know exactly which uuids this specific
+  // response is actually about.
+  property var favoritesRefreshQueriedUuids: []
+  // A comfortably safe margin under maxFavorites (500) for a single
+  // batch request's URL length — not verified against a real oversized
+  // request (this machine's own favorites list never got that large), so
+  // this is a conservative guard against an unverified risk rather than
+  // a measured limit. Above it, refreshing is skipped for that session
+  // rather than guessing at chunking behavior with no primary source to
+  // confirm it's needed or how the API would behave.
+  readonly property int maxFavoritesRefreshBatch: 200
 
   // Bounds enforced on the favorites file itself (see favoritesReadProc)
   // and on every entry loaded from or written to it. The path is fixed and
@@ -379,6 +401,78 @@ finally:
     onTriggered: root.flushFavorites()
   }
 
+  // Triggered by refreshFavorites(), which captures the uuid list into
+  // favoritesRefreshQueriedUuids once, at request time — this reads that
+  // captured snapshot, not a live Object.keys(root.favorites), since
+  // root.favorites can change (a star/unstar) while this up-to-8s
+  // request is still in flight.
+  Process {
+    id: favoritesRefreshProc
+    command: ["curl", "-sS", "-L", "--max-time", "8", "-A", root.userAgent,
+      root.currentApiHost + "/json/stations/byuuid?uuids=" + root.favoritesRefreshQueriedUuids.map(encodeURIComponent).join(",")]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var responseByUuid = {}
+        var parseOk = false
+        try {
+          var data = JSON.parse(String(text || ""))
+          if (Array.isArray(data)) {
+            parseOk = true
+            for (var i = 0; i < data.length; i++) {
+              var s = data[i]
+              var uuid = String((s && s.stationuuid) || "")
+              if (!uuid) continue
+              var safe = root.sanitizeStationRow({
+                uuid: uuid,
+                name: String((s && s.name) || ""),
+                playUrl: String((s && (s.url_resolved || s.url)) || ""),
+                codec: String((s && s.codec) || ""),
+                bitrate: Number((s && s.bitrate) || 0),
+                tags: String((s && s.tags) || "")
+              })
+              if (!root.isValidStationRow(safe)) continue
+              responseByUuid[uuid] = safe
+            }
+          }
+        } catch (e) { }
+        // One retry against the next resolved server, matching every
+        // other Radio Browser fetch in this file — a single transient
+        // failure shouldn't permanently forfeit the session's one-shot
+        // refresh. No error is surfaced either way: this feature has no
+        // user-visible loading/error state, so a still-failed retry just
+        // leaves favorites untouched, silently.
+        if (!parseOk && !root.favoritesRefreshRetried) {
+          root.favoritesRefreshRetried = true
+          root.apiServerIndex = (root.apiServerIndex + 1) % root.apiServers.length
+          Qt.callLater(function() { favoritesRefreshProc.running = true })
+          return
+        }
+        if (!parseOk) return
+        // Merged into the CURRENT root.favorites, not a wholesale
+        // replacement built only from what was queried — a favorite
+        // starred while this request was in flight is not in
+        // favoritesRefreshQueriedUuids at all, so it's untouched by the
+        // loop below. Within what WAS queried: update only a uuid that's
+        // still a current favorite (the listener may have unstarred it
+        // mid-request; the response must never resurrect that), and drop
+        // only a still-current favorite the response omitted — treated as
+        // removed from the directory, silently, per this ticket's scope
+        // (Favorites has no dedicated list to flag it in).
+        var next = {}
+        for (var k in root.favorites) next[k] = root.favorites[k]
+        for (var j = 0; j < root.favoritesRefreshQueriedUuids.length; j++) {
+          var qUuid = root.favoritesRefreshQueriedUuids[j]
+          if (!next[qUuid]) continue
+          if (responseByUuid[qUuid]) next[qUuid] = responseByUuid[qUuid]
+          else delete next[qUuid]
+        }
+        root.favorites = next
+        root.scheduleFavoritesSave()
+        root.resortStations()
+      }
+    }
+  }
+
   Timer {
     id: historySaveTimer
     interval: 200
@@ -425,6 +519,13 @@ finally:
     }
   }
 
+  // Shared by loadFavorites/loadHistory/favoritesRefreshProc — a hand-
+  // edited or corrupted file, or a malformed API response, shouldn't be
+  // able to hand mpv a non-http(s) URL or an empty identity.
+  function isValidStationRow(safe) {
+    return !!(safe.uuid && safe.name && /^https?:\/\//i.test(safe.playUrl))
+  }
+
   function loadFavorites(raw) {
     if (root.favoritesLoaded) return
     var parsed = {}
@@ -439,7 +540,7 @@ finally:
           // Re-validated on load, not just on write — a hand-edited or
           // corrupted file shouldn't be able to hand mpv a non-http(s) URL.
           var safe = root.sanitizeStationRow(f, uuid)
-          if (!safe.uuid || !safe.name || !/^https?:\/\//i.test(safe.playUrl)) continue
+          if (!root.isValidStationRow(safe)) continue
           parsed[safe.uuid] = safe
           count++
         }
@@ -458,6 +559,28 @@ finally:
     favoritesSaveTimer.restart()
   }
 
+  // Once per session, on panel open: re-fetch every favorited station in
+  // one batch request and let favoritesRefreshProc's own completion
+  // handler update codec/bitrate/tags (the only fields Favorites actually
+  // stores — see sanitizeStationRow) or drop a favorite the directory no
+  // longer has. favoritesRefreshed is only set once the fetch actually
+  // fires, so if this races the initial disk read (favoritesReadProc)
+  // finishing, the next panel open just tries again rather than
+  // permanently skipping the session's one refresh.
+  function refreshFavorites() {
+    if (root.favoritesRefreshed || !root.favoritesLoaded) return
+    var uuids = Object.keys(root.favorites)
+    // Neither branch below latches favoritesRefreshed — there's nothing
+    // to refresh yet (or safely batch) this time, but that can change
+    // before the panel is next opened, so leave the one-shot available.
+    if (uuids.length === 0 || uuids.length > root.maxFavoritesRefreshBatch) return
+    root.favoritesRefreshed = true
+    root.favoritesRefreshRetried = false
+    root.favoritesRefreshQueriedUuids = uuids
+    favoritesRefreshProc.running = false
+    Qt.callLater(function() { favoritesRefreshProc.running = true })
+  }
+
   // History is an ordered array (most-recent-first), unlike favorites'
   // uuid-keyed map — order is the whole point here, where favorites has
   // none. Re-validated on load for the same reason as loadFavorites above:
@@ -473,7 +596,7 @@ finally:
           var h = data.history[i]
           if (!h || typeof h !== "object") continue
           var safe = root.sanitizeStationRow(h)
-          if (!safe.uuid || !safe.name || !/^https?:\/\//i.test(safe.playUrl)) continue
+          if (!root.isValidStationRow(safe)) continue
           parsed.push(safe)
         }
       }
@@ -587,6 +710,7 @@ finally:
     if (root.opened && root.hasLoadedStations() && stationsModel.count === 0 && !stationsProc.running) {
       root.loadStations()
     }
+    if (root.opened) root.refreshFavorites()
   }
 
   function flagFor(code) {
